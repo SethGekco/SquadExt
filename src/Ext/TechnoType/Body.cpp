@@ -4,6 +4,7 @@
 #include <HouseTypeClass.h>
 #include <HouseClass.h>
 #include <Utilities/Macro.h>
+#include <Utilities/Debug.h>
 
 TechnoTypeExt::ExtContainer TechnoTypeExt::ExtMap;
 
@@ -244,35 +245,35 @@ static bool ReadMemberBlock(SquadMemberData& out, INI_EX& exINI, const char* pSe
 	else
 		_snprintf_s(prefix, sizeof(prefix), "Squad%d.Member%d", entry, slot);
 
-	bool any = false;
-
+	// NOTE: Valueable/Nullable::Read returns void, so presence is detected by
+	// testing isset() afterwards rather than by the call's return value.
 	_snprintf_s(key, sizeof(key), "%s.Type", prefix);
-	if (out.Type.Read(exINI, pSection, key)) any = true;
+	out.Type.Read(exINI, pSection, key);
 
 	_snprintf_s(key, sizeof(key), "%s.Count", prefix);
-	if (out.Count.Read(exINI, pSection, key)) any = true;
+	out.Count.Read(exINI, pSection, key);
 
 	_snprintf_s(key, sizeof(key), "%s.Chance", prefix);
-	if (out.Chance.Read(exINI, pSection, key)) any = true;
+	out.Chance.Read(exINI, pSection, key);
 
 	_snprintf_s(key, sizeof(key), "%s.Veterancy", prefix);
-	if (out.Veterancy.Read(exINI, pSection, key)) any = true;
+	out.Veterancy.Read(exINI, pSection, key);
 
 	_snprintf_s(key, sizeof(key), "%s.Health", prefix);
-	if (out.Health.Read(exINI, pSection, key)) any = true;
+	out.Health.Read(exINI, pSection, key);
 
 	_snprintf_s(key, sizeof(key), "%s.Facing", prefix);
-	if (out.Facing.Read(exINI, pSection, key)) any = true;
+	out.Facing.Read(exINI, pSection, key);
 
 	_snprintf_s(key, sizeof(key), "%s.RequiredHouses", prefix);
 	out.RequiredHouses.Read(exINI, pSection, key);
-	if (!out.RequiredHouses.empty()) any = true;
 
 	_snprintf_s(key, sizeof(key), "%s.ForbiddenHouses", prefix);
 	out.ForbiddenHouses.Read(exINI, pSection, key);
-	if (!out.ForbiddenHouses.empty()) any = true;
 
-	return any;
+	return out.Type.isset() || out.Count.isset() || out.Chance.isset()
+		|| out.Veterancy.isset() || out.Health.isset() || out.Facing.isset()
+		|| !out.RequiredHouses.empty() || !out.ForbiddenHouses.empty();
 }
 
 void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)

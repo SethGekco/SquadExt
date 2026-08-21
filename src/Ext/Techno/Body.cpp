@@ -8,6 +8,7 @@
 #include <ScenarioClass.h>
 
 #include <Utilities/Macro.h>
+#include <Utilities/Debug.h>
 #include <Helpers/Cast.h>
 
 #include <Ext/TechnoType/Body.h>

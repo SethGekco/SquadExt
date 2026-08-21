@@ -23,7 +23,10 @@ class HouseClass;
 // default value", which is what makes the cascade work.
 struct SquadMemberData
 {
-	NullableIdx<TechnoTypeClass> Type;   // MemberK.Type (expanded form)
+	// Nullable<T*> (not NullableIdx<T>, which stores an int index and whose
+	// Get() would not yield a pointer). detail::read<T*> resolves via
+	// TechnoTypeClass::Find, so this parses a type ID string directly.
+	Nullable<TechnoTypeClass*> Type;     // MemberK.Type (expanded form)
 	Nullable<int> Count;                 // how many of this slot
 	Nullable<int> Chance;                // 0-100 roll per unit; unset = always
 	Nullable<SquadVeterancy> Veterancy;
