@@ -11,9 +11,16 @@ HANDLE SquadExtDLL::hInstance = nullptr;
 char SquadExtDLL::readBuffer[SquadExtDLL::readLength];
 wchar_t SquadExtDLL::wideBuffer[SquadExtDLL::readLength];
 
+// Defined in Hooks.SquadSelection.cpp. Must run AFTER ApplyStatic so that any
+// static patches are in place, and it deliberately reads the Select vtable
+// slots before overwriting them so it chains to whatever is already there
+// (e.g. TechnoAttachmentExt's PassSelection wrapper) instead of erasing it.
+extern void SquadExt_InstallSelectWrappers();
+
 void SquadExtDLL::ExeRun()
 {
     Patch::ApplyStatic();
+    SquadExt_InstallSelectWrappers();
 }
 
 bool __stdcall DllMain(HANDLE hInstance, DWORD dwReason, LPVOID)
