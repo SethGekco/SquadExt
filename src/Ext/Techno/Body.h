@@ -58,6 +58,12 @@ public:
 		// Click behaviour inherited from the entry that spawned this squad.
 		SquadMemberSelection MemberSelection;
 
+		// Follow settings, copied from the spawning entry onto each member.
+		bool SquadFollow;
+		int SquadFollowRange;   // cells of slack before we recall the member
+		int SquadFollowDelay;   // frames between re-orders
+		int SquadFollowTimer;   // counts down; 0 = may re-order
+
 		ExtData(TechnoClass* OwnerObject) : Extension<TechnoClass>(OwnerObject)
 			, SquadAnchor { nullptr }
 			, SquadMembers {}
@@ -67,6 +73,10 @@ public:
 			, SquadDepth { 0 }
 			, SquadLoopLimit { -1 }
 			, MemberSelection { SquadMemberSelection::Independent }
+			, SquadFollow { false }
+			, SquadFollowRange { 4 }
+			, SquadFollowDelay { 15 }
+			, SquadFollowTimer { 0 }
 		{ }
 
 		virtual ~ExtData() override = default;
@@ -96,6 +106,11 @@ public:
 
 	// Called from the per-frame AI hooks: if flagged, spawn the roster now.
 	static void ProcessPendingSpawn(TechnoClass* pAnchor);
+
+	// Called from the per-frame AI hook: keep a member near its anchor. No-op
+	// for anything that is not a following squad member, so units that never
+	// use the feature pay one bool test.
+	static void ProcessSquadFollow(TechnoClass* pMember);
 
 	// The unit a click on pTechno should actually select, honouring
 	// MemberSelection=anchor. Returns pTechno when no redirection applies.

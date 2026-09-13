@@ -34,6 +34,17 @@ enum class SquadActivateAs
 	Independent,  // only when this unit is NOT a squad member
 };
 
+// Standing order given to a member the moment it spawns, so a squad that has no
+// follow behaviour still *does* something instead of standing inert.
+enum class SquadStance
+{
+	None,       // leave the engine default
+	Guard,      // hold position, engage what comes close (default)
+	AreaGuard,  // patrol/defend a radius around where it stands
+	Sticky,     // never move, ever
+	Hunt,       // seek out enemies across the map
+};
+
 // Rank to grant a spawned member.
 enum class SquadVeterancy
 {
@@ -90,6 +101,23 @@ namespace detail
 			if (_strcmpi(v, "member") == 0) { value = SquadActivateAs::Member; return true; }
 			if (_strcmpi(v, "independent") == 0) { value = SquadActivateAs::Independent; return true; }
 			Debug::INIParseFailed(pSection, pKey, v, "Expected any, member or independent");
+		}
+		return false;
+	}
+
+	template <>
+	inline bool read<SquadStance>(SquadStance& value, INI_EX& parser, const char* pSection, const char* pKey)
+	{
+		if (parser.ReadString(pSection, pKey))
+		{
+			auto const v = parser.value();
+			if (_strcmpi(v, "none") == 0) { value = SquadStance::None; return true; }
+			if (_strcmpi(v, "guard") == 0) { value = SquadStance::Guard; return true; }
+			if (_strcmpi(v, "areaguard") == 0 || _strcmpi(v, "area_guard") == 0)
+			{ value = SquadStance::AreaGuard; return true; }
+			if (_strcmpi(v, "sticky") == 0) { value = SquadStance::Sticky; return true; }
+			if (_strcmpi(v, "hunt") == 0) { value = SquadStance::Hunt; return true; }
+			Debug::INIParseFailed(pSection, pKey, v, "Expected none, guard, areaguard, sticky or hunt");
 		}
 		return false;
 	}

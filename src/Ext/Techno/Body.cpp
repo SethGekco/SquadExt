@@ -96,6 +96,27 @@ namespace
 		}
 	}
 
+	// Give the member a standing order so a squad with no follow behaviour still
+	// does something instead of standing inert.
+	void ApplyStance(TechnoClass* pMember, SquadStance stance)
+	{
+		Mission mission;
+		switch (stance)
+		{
+		case SquadStance::Guard:     mission = Mission::Guard;      break;
+		case SquadStance::AreaGuard: mission = Mission::Area_Guard; break;
+		case SquadStance::Sticky:    mission = Mission::Sticky;     break;
+		case SquadStance::Hunt:      mission = Mission::Hunt;       break;
+		case SquadStance::None:
+		default:
+			return; // leave the engine default untouched
+		}
+
+		// Virtual calls -- QueueMission is an R0 stub in YRpp, so a qualified
+		// call would silently no-op (same footgun as Select / Unlimbo).
+		pMember->QueueMission(mission, false);
+	}
+
 	void ApplyHealth(TechnoClass* pMember, int percent)
 	{
 		if (percent >= 100 || percent <= 0)
@@ -333,12 +354,89 @@ void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
 
 				ApplyVeterancy(pMember, pAnchor, vet);
 				ApplyHealth(pMember, health);
+				ApplyStance(pMember, pEntry->Stance);
+
+				if (auto const pMemberExt = TechnoExt::ExtMap.Find(pMember))
+				{
+					pMemberExt->SquadFollow = pEntry->Follow;
+					pMemberExt->SquadFollowRange = pEntry->FollowRange;
+					pMemberExt->SquadFollowDelay = pEntry->FollowDelay;
+					pMemberExt->SquadFollowTimer = 0;
+				}
 
 				pExt->SquadMembers.push_back(pMember);
 				pExt->MemberSelection = pEntry->MemberSelection;
 			}
 		}
 	}
+}
+
+// ============================================================================
+// Follow
+//
+// Keeps a member trailing its anchor. Deliberately minimal: no formation, no
+// slots, no pathfinding of our own -- just "if you have drifted too far and you
+// are not busy, walk back". The engine does the actual movement, so this stays
+// deterministic and costs nothing for units that are not following members.
+//
+// Anything more (formation shapes, follow offsets, order inheritance) is the
+// Peer/Retinue behaviour work and is deliberately NOT attempted here.
+// ============================================================================
+
+void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pMember);
+
+	// Cheapest possible rejection for the overwhelming majority of units.
+	if (!pExt || !pExt->SquadFollow)
+		return;
+
+	if (pExt->SquadFollowTimer > 0)
+	{
+		--pExt->SquadFollowTimer;
+		return;
+	}
+
+	auto const pAnchor = pExt->SquadAnchor;
+	if (!pAnchor || !pAnchor->IsAlive || pAnchor->InLimbo)
+		return;
+
+	if (!pMember->IsAlive || pMember->InLimbo)
+		return;
+
+	auto const pFoot = abstract_cast<FootClass*>(pMember);
+	if (!pFoot)
+		return; // buildings cannot follow anything
+
+	// Do not override a player's own order, or an attack in progress. We only
+	// take over when the member is idling.
+	switch (pFoot->CurrentMission)
+	{
+	case Mission::Guard:
+	case Mission::Area_Guard:
+	case Mission::Sleep:
+	case Mission::None:
+	case Mission::Stop:
+		break;
+	default:
+		return; // busy: moving, attacking, entering, harvesting...
+	}
+
+	// Leptons -> cells. 256 leptons per cell.
+	int const rangeCells = pExt->SquadFollowRange > 0 ? pExt->SquadFollowRange : 4;
+	if (pMember->DistanceFrom(pAnchor) <= rangeCells * 256)
+		return; // close enough
+
+	auto const pCell = MapClass::Instance.TryGetCellAt(pAnchor->GetMapCoords());
+	if (!pCell)
+		return;
+
+	// Virtual calls -- SetDestination is RX and QueueMission is R0 in YRpp, so
+	// qualified calls would silently no-op.
+	pFoot->SetDestination(pCell, true);
+	pFoot->QueueMission(Mission::Move, false);
+
+	pExt->SquadFollowTimer = pExt->SquadFollowDelay > 0 ? pExt->SquadFollowDelay : 15;
 }
 
 // ============================================================================
@@ -425,6 +523,10 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->SquadDepth)
 		.Process(this->SquadLoopLimit)
 		.Process(this->MemberSelection)
+		.Process(this->SquadFollow)
+		.Process(this->SquadFollowRange)
+		.Process(this->SquadFollowDelay)
+		.Process(this->SquadFollowTimer)
 		;
 }
 

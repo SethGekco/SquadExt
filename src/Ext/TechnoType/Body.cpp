@@ -6,6 +6,9 @@
 #include <Utilities/Macro.h>
 #include <Utilities/Debug.h>
 
+// Defined in Hooks.SquadSelection.cpp. Idempotent (guarded by its own flag).
+extern void SquadExt_InstallSelectWrappers();
+
 TechnoTypeExt::ExtContainer TechnoTypeExt::ExtMap;
 
 // Longest key we format is roughly "Squad12.Member12.ForbiddenHouses" (32) --
@@ -379,6 +382,18 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 		_snprintf_s(key, sizeof(key), "Squad%d.LoopLimit", idx);
 		entry.LoopLimit.Read(exINI, pSection, key);
 
+		_snprintf_s(key, sizeof(key), "Squad%d.Stance", idx);
+		entry.Stance.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.Follow", idx);
+		entry.Follow.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.FollowRange", idx);
+		entry.FollowRange.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.FollowDelay", idx);
+		entry.FollowDelay.Read(exINI, pSection, key);
+
 		if (i == this->SquadData.size())
 			this->SquadData.push_back(entry);
 		else
@@ -390,6 +405,16 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 	// distinction that already cost a full debug round here.
 	if (!this->SquadData.empty())
 	{
+		// Install the Select vtable wrappers lazily, the first time a type that
+		// actually uses squads is seen.
+		//
+		// Doing it from the LoadFromINI hook (i.e. on the very first techno type)
+		// was still too early: that pass ran, but its log line never reached
+		// debug.log while these parse lines did -- the logger is not ready yet at
+		// that point. Deferring to here fixes the timing AND means mods that never
+		// use squads never patch the vtable at all.
+		SquadExt_InstallSelectWrappers();
+
 		size_t members = 0;
 		for (auto const& e : this->SquadData)
 			members += e.SlotCount();
@@ -483,6 +508,10 @@ bool SquadEntryData::Serialize(T& stm)
 		.Process(this->LoopLimit)
 		.Process(this->MemberDefault)
 		.Process(this->MemberOverrides)
+		.Process(this->Stance)
+		.Process(this->Follow)
+		.Process(this->FollowRange)
+		.Process(this->FollowDelay)
 		.Success();
 }
 
@@ -534,28 +563,12 @@ DEFINE_HOOK(0x717094, TechnoTypeClass_Save_Suffix_SquadExt, 0x5)
 	return 0;
 }
 
-// Defined in Hooks.SquadSelection.cpp. Idempotent (guarded by its own flag).
-extern void SquadExt_InstallSelectWrappers();
-
 DEFINE_HOOK(0x716123, TechnoTypeClass_LoadFromINI_SquadExt, 0x5)
 {
 	GET(TechnoTypeClass*, pItem, EBP);
 	GET_STACK(CCINIClass*, pINI, 0x380);
 	TechnoTypeExt::ExtMap.LoadFromINI(pItem, pINI);
 
-	// Install the Select vtable wrappers here rather than from ExeRun.
-	//
-	// ExeRun is driven by DEFINE_HOOK(0x7CD810), an address that nearly every
-	// Phobos-derived standalone DLL hooks. In Rex's 25-DLL setup ours never
-	// fired -- proven by the total absence of our unconditional install log
-	// line, while 13 other Ext DLLs logged normally. Anything that depends on
-	// ExeRun (Patch::ApplyStatic, so every static/vtable patch) was therefore
-	// silently dead. DEFINE_HOOK breakpoints are applied by Syringe itself and
-	// do not depend on ExeRun, so this hook is a reliable place to do it.
-	//
-	// Runs per type, but the install guards itself and is a single bool test
-	// after the first call. Rules parsing is well before any Select can occur.
-	SquadExt_InstallSelectWrappers();
 
 	return 0;
 }

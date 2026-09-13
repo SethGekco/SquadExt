@@ -66,6 +66,12 @@ struct SquadEntryData
 	Valueable<SquadActivateAs> ActivateAs;
 	Nullable<int> LoopLimit;                      // per-entry nesting override
 
+	// -- cohesion / behaviour --
+	Valueable<SquadStance> Stance;   // standing order given at spawn
+	Valueable<bool> Follow;          // members trail a moving anchor
+	Valueable<int> FollowRange;      // cells of slack before a member is recalled
+	Valueable<int> FollowDelay;      // frames between follow re-orders (anti-spam)
+
 	// -- member cascade --
 	SquadMemberData MemberDefault;                // SquadN.Member.*
 	std::vector<SquadMemberData> MemberOverrides; // SquadN.MemberK.*
@@ -83,6 +89,10 @@ struct SquadEntryData
 		, MemberSelection { SquadMemberSelection::Independent }
 		, ActivateAs { SquadActivateAs::Any }
 		, LoopLimit {}
+		, Stance { SquadStance::Guard }
+		, Follow { true }
+		, FollowRange { 4 }
+		, FollowDelay { 15 }
 		, MemberDefault {}
 		, MemberOverrides {}
 	{ }

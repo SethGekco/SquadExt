@@ -63,6 +63,7 @@ DEFINE_HOOK(0x4DA8A0, FootClass_Update_SquadExt, 0x6)
 	GET(FootClass* const, pThis, ESI);
 
 	TechnoExt::ProcessPendingSpawn(pThis);
+	TechnoExt::ProcessSquadFollow(pThis);
 
 	return 0;
 }
