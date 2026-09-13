@@ -11,9 +11,16 @@
 #include <Utilities/Debug.h>
 #include <Helpers/Cast.h>
 
+#include <unordered_set>
+
 #include <Ext/TechnoType/Body.h>
 
 TechnoExt::ExtContainer TechnoExt::ExtMap;
+
+// Bounds for walking a nested squad tree during selection. A cyclic roster is
+// already prevented from hanging by the visited set; these just cap the work.
+static constexpr int MaxSquadTreeDepth = 64;
+static constexpr size_t MaxSquadTreeNodes = 256;
 
 namespace
 {
@@ -467,23 +474,46 @@ void TechnoExt::CollectSelectionGroup(TechnoClass* pTechno, std::vector<TechnoCl
 	if (!pExt || pExt->MemberSelection != SquadMemberSelection::Group)
 		return;
 
-	// Resolve to the anchor, then collect it plus every living member. Works
-	// whether the click landed on the anchor or on one of its members.
-	TechnoClass* pAnchor = pExt->SquadAnchor ? pExt->SquadAnchor : pTechno;
-	if (!pAnchor->IsAlive)
-		return;
-
-	auto const pAnchorExt = TechnoExt::ExtMap.Find(pAnchor);
-	if (!pAnchorExt)
-		return;
-
-	if (pAnchor != pTechno)
-		out.push_back(pAnchor);
-
-	for (auto const pMember : pAnchorExt->SquadMembers)
+	// Nested squads FLATTEN into one selection group: walk up to the top-level
+	// anchor, then collect that whole tree. Previously this only looked one
+	// level up, so a Prism Cannon anchoring a SEAL selected the SEAL but none of
+	// the SEAL's own GIs -- the chain looked half-connected in game.
+	TechnoClass* pRoot = pTechno;
+	for (int guard = 0; guard < MaxSquadTreeDepth; ++guard)
 	{
-		if (pMember && pMember != pTechno && pMember->IsAlive && !pMember->InLimbo)
-			out.push_back(pMember);
+		auto const pCurExt = TechnoExt::ExtMap.Find(pRoot);
+		auto const pUp = pCurExt ? pCurExt->SquadAnchor : nullptr;
+		if (!pUp || !pUp->IsAlive || pUp->InLimbo)
+			break;
+		pRoot = pUp;
+	}
+
+	// Breadth-first over the tree. `seen` makes a cyclic roster terminate rather
+	// than hang, and the size cap bounds a pathological chain.
+	std::vector<TechnoClass*> queue;
+	std::unordered_set<TechnoClass*> seen;
+	queue.push_back(pRoot);
+	seen.insert(pRoot);
+
+	for (size_t i = 0; i < queue.size() && queue.size() < MaxSquadTreeNodes; ++i)
+	{
+		auto const pCur = queue[i];
+
+		if (pCur != pTechno)
+			out.push_back(pCur);
+
+		auto const pCurExt = TechnoExt::ExtMap.Find(pCur);
+		if (!pCurExt)
+			continue;
+
+		for (auto const pMember : pCurExt->SquadMembers)
+		{
+			if (pMember && pMember->IsAlive && !pMember->InLimbo
+				&& seen.insert(pMember).second)
+			{
+				queue.push_back(pMember);
+			}
+		}
 	}
 }
 
