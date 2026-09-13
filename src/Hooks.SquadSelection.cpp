@@ -150,8 +150,24 @@ void SquadExt_InstallSelectWrappers()
 	capture(VTable_Infantry, g_PrevInfantry);
 	capture(VTable_Building, g_PrevBuilding);
 	capture(VTable_Aircraft, g_PrevAircraft);
+}
 
-	Debug::Log("[SquadExt] Select wrappers installed; chaining to prior handlers "
-		"(unit=0x%X infantry=0x%X building=0x%X aircraft=0x%X).\n",
-		g_PrevUnit, g_PrevInfantry, g_PrevBuilding, g_PrevAircraft);
+// Reported by the rules-parse log line, which is a logging path we have
+// VERIFIED reaches debug.log.
+//
+// Why not just log from inside the install: we tried, twice, and the line never
+// appeared even when the install provably ran immediately before a log call that
+// did appear. Rather than keep guessing at the logger's readiness, the status is
+// now piggybacked onto a message already known to work. Lesson: a liveness probe
+// is only worth anything on a channel whose liveness you have already proven.
+bool SquadExt_SelectWrappersInstalled()
+{
+	return g_Installed;
+}
+
+// The handler each slot chained to, for diagnostics. 0x6FBFA0 means we were
+// first; anything else means another DLL had already wrapped that slot.
+unsigned int SquadExt_PrevSelectHandler()
+{
+	return reinterpret_cast<unsigned int>(g_PrevUnit);
 }

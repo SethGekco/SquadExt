@@ -8,6 +8,8 @@
 
 // Defined in Hooks.SquadSelection.cpp. Idempotent (guarded by its own flag).
 extern void SquadExt_InstallSelectWrappers();
+extern bool SquadExt_SelectWrappersInstalled();
+extern unsigned int SquadExt_PrevSelectHandler();
 
 TechnoTypeExt::ExtContainer TechnoTypeExt::ExtMap;
 
@@ -419,12 +421,15 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 		for (auto const& e : this->SquadData)
 			members += e.SlotCount();
 
-		Debug::Log("[SquadExt] %s: parsed %u squad entr%s, %u member slot%s.\n",
+		Debug::Log("[SquadExt] %s: parsed %u squad entr%s, %u member slot%s. "
+			"Select wrappers: %s (chained to 0x%X).\n",
 			pSection,
 			static_cast<unsigned int>(this->SquadData.size()),
 			this->SquadData.size() == 1 ? "y" : "ies",
 			static_cast<unsigned int>(members),
-			members == 1 ? "" : "s");
+			members == 1 ? "" : "s",
+			SquadExt_SelectWrappersInstalled() ? "ACTIVE" : "NOT INSTALLED",
+			SquadExt_PrevSelectHandler());
 	}
 }
 
