@@ -384,6 +384,23 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 		else
 			this->SquadData[i] = entry;
 	}
+
+	// Liveness proof. Without this there is no way to tell "the tags parsed and
+	// no squad was eligible" apart from "the DLL never ran at all" -- a
+	// distinction that already cost a full debug round here.
+	if (!this->SquadData.empty())
+	{
+		size_t members = 0;
+		for (auto const& e : this->SquadData)
+			members += e.SlotCount();
+
+		Debug::Log("[SquadExt] %s: parsed %u squad entr%s, %u member slot%s.\n",
+			pSection,
+			static_cast<unsigned int>(this->SquadData.size()),
+			this->SquadData.size() == 1 ? "y" : "ies",
+			static_cast<unsigned int>(members),
+			members == 1 ? "" : "s");
+	}
 }
 
 // ============================================================================
@@ -517,10 +534,28 @@ DEFINE_HOOK(0x717094, TechnoTypeClass_Save_Suffix_SquadExt, 0x5)
 	return 0;
 }
 
+// Defined in Hooks.SquadSelection.cpp. Idempotent (guarded by its own flag).
+extern void SquadExt_InstallSelectWrappers();
+
 DEFINE_HOOK(0x716123, TechnoTypeClass_LoadFromINI_SquadExt, 0x5)
 {
 	GET(TechnoTypeClass*, pItem, EBP);
 	GET_STACK(CCINIClass*, pINI, 0x380);
 	TechnoTypeExt::ExtMap.LoadFromINI(pItem, pINI);
+
+	// Install the Select vtable wrappers here rather than from ExeRun.
+	//
+	// ExeRun is driven by DEFINE_HOOK(0x7CD810), an address that nearly every
+	// Phobos-derived standalone DLL hooks. In Rex's 25-DLL setup ours never
+	// fired -- proven by the total absence of our unconditional install log
+	// line, while 13 other Ext DLLs logged normally. Anything that depends on
+	// ExeRun (Patch::ApplyStatic, so every static/vtable patch) was therefore
+	// silently dead. DEFINE_HOOK breakpoints are applied by Syringe itself and
+	// do not depend on ExeRun, so this hook is a reliable place to do it.
+	//
+	// Runs per type, but the install guards itself and is a single bool test
+	// after the first call. Rules parsing is well before any Select can occur.
+	SquadExt_InstallSelectWrappers();
+
 	return 0;
 }
