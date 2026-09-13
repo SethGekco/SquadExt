@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include <AbstractClass.h>
 #include <TechnoClass.h>
 
 #include <Utilities/Container.h>
@@ -95,6 +96,33 @@ public:
 	public:
 		ExtContainer();
 		~ExtContainer();
+
+		// MUST be overridden or ExtData::InvalidatePointer is NEVER called.
+		//
+		// Container::PointerGotInvalid gates the whole invalidation pass behind
+		// InvalidateExtDataIgnorable, and the base implementation returns true
+		// (= ignore everything). Without this override our anchor/member raw
+		// TechnoClass* pointers are never scrubbed, so a member outliving its
+		// anchor dereferences freed memory.
+		//
+		// That is not hypothetical: it crashed in-game at 0x5F6467, 0x27 bytes
+		// into AbstractClass::DistanceFrom (0x5F6440), reached from the follow
+		// tick via FootClass::Update. Checking pAnchor->IsAlive does not help --
+		// reading the flag off freed memory is already undefined and can easily
+		// come back non-zero.
+		virtual bool InvalidateExtDataIgnorable(void* const ptr) const override
+		{
+			switch (static_cast<AbstractClass*>(ptr)->WhatAmI())
+			{
+			case AbstractType::Unit:
+			case AbstractType::Infantry:
+			case AbstractType::Building:
+			case AbstractType::Aircraft:
+				return false; // we hold raw pointers to these
+			default:
+				return true;
+			}
+		}
 	};
 
 	static ExtContainer ExtMap;
