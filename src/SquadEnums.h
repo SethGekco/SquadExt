@@ -45,6 +45,52 @@ enum class SquadStance
 	Hunt,       // seek out enemies across the map
 };
 
+// When a roster entry fires. A LIST, so one entry can answer to several
+// triggers (e.g. "produced,death"). Stored as a bitmask.
+//
+// Deliberately NOT an enum class: it is combined with |, tested with &, and
+// parsed from a comma list.
+enum SquadSpawnEventFlags : int
+{
+	SquadEvent_None     = 0,
+	SquadEvent_Produced = 1 << 0, // unit enters play (the default)
+	SquadEvent_Death    = 1 << 1, // unit is destroyed by damage -> deathsquad
+	SquadEvent_Timer    = 1 << 2, // every SpawnEvent.Interval frames
+};
+
+// Parse "produced,death,timer" into a mask. Returns false if the key is absent,
+// so callers can distinguish "unset" (use the default) from "set to nothing".
+inline bool SquadExt_ReadSpawnEvents(CCINIClass* pINI, const char* pSection,
+	const char* pKey, int& outMask)
+{
+	char buffer[256];
+	if (pINI->ReadString(pSection, pKey, "", buffer, sizeof(buffer)) <= 0)
+		return false;
+
+	int mask = SquadEvent_None;
+	char* context = nullptr;
+	for (char* tok = strtok_s(buffer, ",", &context); tok; tok = strtok_s(nullptr, ",", &context))
+	{
+		while (*tok == ' ') ++tok; // tolerate "produced, death"
+
+		if (_strcmpi(tok, "produced") == 0)      mask |= SquadEvent_Produced;
+		else if (_strcmpi(tok, "death") == 0)    mask |= SquadEvent_Death;
+		else if (_strcmpi(tok, "timer") == 0)    mask |= SquadEvent_Timer;
+		else if (_strcmpi(tok, "none") == 0)     { /* explicit no-trigger */ }
+		else
+		{
+			// deploy / promotion / manual are in DESIGN.md but not implemented:
+			// each needs a hook whose registers we have not verified. Reject
+			// loudly rather than silently accepting a tag that does nothing.
+			Debug::INIParseFailed(pSection, pKey, tok,
+				"Expected produced, death, timer or none (deploy/promotion/manual not implemented yet)");
+		}
+	}
+
+	outMask = mask;
+	return true;
+}
+
 // What happens to the members when their anchor dies. Value names mirror
 // Phobos's AutoDeath.Behavior where they overlap, so the vocabulary is already
 // familiar to modders.

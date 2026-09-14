@@ -63,6 +63,7 @@ DEFINE_HOOK(0x4DA8A0, FootClass_Update_SquadExt, 0x6)
 	GET(FootClass* const, pThis, ESI);
 
 	TechnoExt::ProcessPendingSpawn(pThis);
+	TechnoExt::ProcessSpawnTimer(pThis);
 	TechnoExt::ProcessAnchorDeath(pThis);
 	TechnoExt::ProcessSquadFollow(pThis);
 
@@ -90,6 +91,10 @@ DEFINE_HOOK(0x702050, TechnoClass_ReceiveDamage_AnchorDeath_SquadExt, 0x6)
 {
 	GET(TechnoClass* const, pThis, ESI);
 
+	// Order matters: spawn the deathsquad BEFORE arming the survivors' reaction,
+	// so freshly spawned deathsquad members (which are unlinked) are never
+	// mistaken for members of the squad that is being dissolved.
+	TechnoExt::SpawnDeathSquad(pThis);
 	TechnoExt::ArmAnchorDeath(pThis);
 
 	return 0;
@@ -100,6 +105,7 @@ DEFINE_HOOK(0x43FE69, BuildingClass_AI_SquadExt, 0xA)
 	GET(BuildingClass*, pThis, ESI);
 
 	TechnoExt::ProcessPendingSpawn(pThis);
+	TechnoExt::ProcessSpawnTimer(pThis);
 	TechnoExt::ProcessAnchorDeath(pThis);
 
 	return 0;

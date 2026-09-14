@@ -396,6 +396,19 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 		_snprintf_s(key, sizeof(key), "Squad%d.FollowDelay", idx);
 		entry.FollowDelay.Read(exINI, pSection, key);
 
+		_snprintf_s(key, sizeof(key), "Squad%d.SpawnEvent", idx);
+		{
+			int mask = SquadEvent_Produced;
+			if (SquadExt_ReadSpawnEvents(pINI, pSection, key, mask))
+				entry.SpawnEvents = mask;
+		}
+
+		_snprintf_s(key, sizeof(key), "Squad%d.SpawnEvent.Interval", idx);
+		entry.SpawnEventInterval.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.SpawnEvent.Chance", idx);
+		entry.SpawnEventChance.Read(exINI, pSection, key);
+
 		_snprintf_s(key, sizeof(key), "Squad%d.AnchorDeath.Behavior", idx);
 		entry.AnchorDeath.Read(exINI, pSection, key);
 
@@ -526,6 +539,9 @@ bool SquadEntryData::Serialize(T& stm)
 		.Process(this->Follow)
 		.Process(this->FollowRange)
 		.Process(this->FollowDelay)
+		.Process(this->SpawnEvents)
+		.Process(this->SpawnEventInterval)
+		.Process(this->SpawnEventChance)
 		.Process(this->AnchorDeath)
 		.Process(this->AnchorDeathDelay)
 		.Process(this->AnchorDeathHeir)

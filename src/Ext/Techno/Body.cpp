@@ -173,27 +173,22 @@ void TechnoExt::FlagForSquadSpawn(TechnoClass* pTechno)
 	pExt->PendingSquadSpawn = true;
 }
 
-void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
+// Core spawn pass, shared by every trigger.
+//
+//   eventFlag    -- only entries whose SpawnEvent list contains this flag fire.
+//   linkToAnchor -- false for deathsquads: the anchor is being destroyed, so
+//                   linking members to it would create an instantly-dangling
+//                   parent and a squad with no leader. They spawn independent.
+void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool linkToAnchor)
 {
-	if (!pAnchor || !pAnchor->IsAlive || pAnchor->InLimbo)
+	if (!pAnchor)
 		return;
 
 	auto const pExt = TechnoExt::ExtMap.Find(pAnchor);
-	if (!pExt || !pExt->PendingSquadSpawn)
-		return;
-
-	pExt->PendingSquadSpawn = false;
-
-	if (pExt->SquadsSpawned)
-		return;
-
 	auto const pType = pAnchor->GetTechnoType();
 	auto const pTypeExt = pType ? TechnoTypeExt::ExtMap.Find(pType) : nullptr;
-	if (!pTypeExt || !pTypeExt->HasSquads())
+	if (!pExt || !pTypeExt || !pTypeExt->HasSquads())
 		return;
-
-	// Handled exactly once per unit.
-	pExt->SquadsSpawned = true;
 
 	// Generation of this unit; 0 and 1 both mean top-level.
 	int const myGen = pExt->SquadDepth > 0 ? pExt->SquadDepth : 1;
@@ -214,6 +209,15 @@ void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
 	std::vector<const SquadEntryData*> eligible;
 	for (auto const& entry : pTypeExt->SquadData)
 	{
+		// Only entries that answer to THIS trigger.
+		if (!(entry.SpawnEvents & eventFlag))
+			continue;
+
+		// Per-firing roll, separate from the entry's own Chance so a repeating
+		// timer entry can be "usually fires" without affecting its one-off use.
+		if (!RollPercent(entry.SpawnEventChance))
+			continue;
+
 		switch (entry.ActivateAs)
 		{
 		case SquadActivateAs::Member:
@@ -337,7 +341,7 @@ void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
 				// member's own pending-spawn flag, and the nested pass that
 				// follows must already see the correct IsSquadMember state and
 				// generation for ActivateAs / LoopLimit to resolve right.
-				if (auto const pMemberExt = TechnoExt::ExtMap.Find(pMember))
+				if (auto const pMemberExt = linkToAnchor ? TechnoExt::ExtMap.Find(pMember) : nullptr)
 				{
 					pMemberExt->IsSquadMember = true;
 					pMemberExt->SquadAnchor = pAnchor;
@@ -376,8 +380,11 @@ void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
 					pMemberExt->AnchorDeathTimer = -1;
 				}
 
-				pExt->SquadMembers.push_back(pMember);
-				pExt->MemberSelection = pEntry->MemberSelection;
+				if (linkToAnchor)
+				{
+					pExt->SquadMembers.push_back(pMember);
+					pExt->MemberSelection = pEntry->MemberSelection;
+				}
 			}
 		}
 	}
@@ -449,6 +456,92 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	pFoot->QueueMission(Mission::Move, false);
 
 	pExt->SquadFollowTimer = pExt->SquadFollowDelay > 0 ? pExt->SquadFollowDelay : 15;
+}
+
+// ---- trigger entry points -------------------------------------------------
+
+void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
+{
+	if (!pAnchor || !pAnchor->IsAlive || pAnchor->InLimbo)
+		return;
+
+	auto const pExt = TechnoExt::ExtMap.Find(pAnchor);
+	if (!pExt || !pExt->PendingSquadSpawn)
+		return;
+
+	pExt->PendingSquadSpawn = false;
+
+	if (pExt->SquadsSpawned)
+		return;
+
+	// The `produced` trigger is one-shot per unit: Unlimbo fires again on
+	// undeploy / transport exit / chrono-warp.
+	pExt->SquadsSpawned = true;
+
+	TechnoExt::SpawnEntriesForEvent(pAnchor, SquadEvent_Produced, true);
+
+	// Arm the repeating trigger, but ONLY if some entry actually asks for it --
+	// that keeps the per-frame tick a single already-negative int test for every
+	// other unit in the game (pay-for-what-you-use).
+	auto const pType = pAnchor->GetTechnoType();
+	auto const pTypeExt = pType ? TechnoTypeExt::ExtMap.Find(pType) : nullptr;
+	if (!pTypeExt)
+		return;
+
+	for (auto const& entry : pTypeExt->SquadData)
+	{
+		if ((entry.SpawnEvents & SquadEvent_Timer) && entry.SpawnEventInterval > 0)
+		{
+			pExt->SquadEventTimer = entry.SpawnEventInterval;
+			break;
+		}
+	}
+}
+
+void TechnoExt::ProcessSpawnTimer(TechnoClass* pAnchor)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pAnchor);
+
+	// Cheapest possible rejection for the overwhelming majority of units.
+	if (!pExt || pExt->SquadEventTimer < 0)
+		return;
+
+	if (!pAnchor->IsAlive || pAnchor->InLimbo)
+		return;
+
+	if (pExt->SquadEventTimer > 0)
+	{
+		--pExt->SquadEventTimer;
+		return;
+	}
+
+	TechnoExt::SpawnEntriesForEvent(pAnchor, SquadEvent_Timer, true);
+
+	// Re-arm from the first timer entry's interval.
+	auto const pType = pAnchor->GetTechnoType();
+	auto const pTypeExt = pType ? TechnoTypeExt::ExtMap.Find(pType) : nullptr;
+	pExt->SquadEventTimer = -1;
+
+	if (!pTypeExt)
+		return;
+
+	for (auto const& entry : pTypeExt->SquadData)
+	{
+		if ((entry.SpawnEvents & SquadEvent_Timer) && entry.SpawnEventInterval > 0)
+		{
+			pExt->SquadEventTimer = entry.SpawnEventInterval;
+			break;
+		}
+	}
+}
+
+void TechnoExt::SpawnDeathSquad(TechnoClass* pAnchor)
+{
+	// Runs from the 0x702050 death site, where the unit is still present and its
+	// coords/owner are valid -- the encyclopedia documents on-death spawning here
+	// as verified from a standalone DLL. Members spawn UNLINKED: their would-be
+	// anchor is about to be freed.
+	TechnoExt::SpawnEntriesForEvent(pAnchor, SquadEvent_Death, false);
 }
 
 // ============================================================================
@@ -709,6 +802,7 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->AnchorDeathBehavior)
 		.Process(this->AnchorDeathTimer)
 		.Process(this->AnchorDeathHeir)
+		.Process(this->SquadEventTimer)
 		;
 }
 

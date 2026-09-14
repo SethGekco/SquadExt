@@ -72,6 +72,11 @@ struct SquadEntryData
 	Valueable<int> FollowRange;      // cells of slack before a member is recalled
 	Valueable<int> FollowDelay;      // frames between follow re-orders (anti-spam)
 
+	// -- when this entry fires (bitmask of SquadSpawnEventFlags) --
+	int SpawnEvents;
+	Valueable<int> SpawnEventInterval; // frames, for the timer trigger
+	Valueable<int> SpawnEventChance;   // 0-100 roll each time the event fires
+
 	// -- what happens to members when the anchor dies --
 	Valueable<SquadAnchorDeath> AnchorDeath;
 	Valueable<int> AnchorDeathDelay;        // frames members linger before it fires
@@ -98,6 +103,9 @@ struct SquadEntryData
 		, Follow { true }
 		, FollowRange { 4 }
 		, FollowDelay { 15 }
+		, SpawnEvents { SquadEvent_Produced }
+		, SpawnEventInterval { 0 }
+		, SpawnEventChance { 100 }
 		, AnchorDeath { SquadAnchorDeath::Disband }
 		, AnchorDeathDelay { 0 }
 		, AnchorDeathHeir {}

@@ -72,6 +72,11 @@ public:
 		int AnchorDeathTimer;
 		TechnoTypeClass* AnchorDeathHeir;
 
+		// Countdown for the `timer` SpawnEvent. -1 = this unit has no timer
+		// entry, which is the case for essentially every unit in the game and
+		// keeps the per-frame check a single negative-int test.
+		int SquadEventTimer;
+
 		ExtData(TechnoClass* OwnerObject) : Extension<TechnoClass>(OwnerObject)
 			, SquadAnchor { nullptr }
 			, SquadMembers {}
@@ -88,6 +93,7 @@ public:
 			, AnchorDeathBehavior { SquadAnchorDeath::Disband }
 			, AnchorDeathTimer { -1 }
 			, AnchorDeathHeir { nullptr }
+			, SquadEventTimer { -1 }
 		{ }
 
 		virtual ~ExtData() override = default;
@@ -142,8 +148,21 @@ public:
 	// free for units with no roster.
 	static void FlagForSquadSpawn(TechnoClass* pTechno);
 
-	// Called from the per-frame AI hooks: if flagged, spawn the roster now.
+	// Core spawn pass shared by every trigger. Only entries whose SpawnEvent
+	// list contains eventFlag fire. linkToAnchor=false spawns them independent
+	// (used for deathsquads, whose anchor is being destroyed).
+	static void SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool linkToAnchor);
+
+	// Called from the per-frame AI hooks: if flagged, run the `produced`
+	// trigger now (one-shot) and arm the repeating trigger if any entry wants it.
 	static void ProcessPendingSpawn(TechnoClass* pAnchor);
+
+	// Called from the per-frame AI hook: run the `timer` trigger on its
+	// interval. No-op unless this unit has a timer entry.
+	static void ProcessSpawnTimer(TechnoClass* pAnchor);
+
+	// Called from the death hook: run the `death` trigger (deathsquad).
+	static void SpawnDeathSquad(TechnoClass* pAnchor);
 
 	// Called from the per-frame AI hook: keep a member near its anchor. No-op
 	// for anything that is not a following squad member, so units that never
