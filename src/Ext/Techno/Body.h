@@ -65,6 +65,13 @@ public:
 		int SquadFollowDelay;   // frames between re-orders
 		int SquadFollowTimer;   // counts down; 0 = may re-order
 
+		// Anchor-death handling, copied from the spawning entry onto each member.
+		SquadAnchorDeath AnchorDeathBehavior;
+		// >= 0 once the anchor has died: frames left before the behaviour fires.
+		// -1 = not pending. Survives save/load so a delayed reaction is not lost.
+		int AnchorDeathTimer;
+		TechnoTypeClass* AnchorDeathHeir;
+
 		ExtData(TechnoClass* OwnerObject) : Extension<TechnoClass>(OwnerObject)
 			, SquadAnchor { nullptr }
 			, SquadMembers {}
@@ -78,6 +85,9 @@ public:
 			, SquadFollowRange { 4 }
 			, SquadFollowDelay { 15 }
 			, SquadFollowTimer { 0 }
+			, AnchorDeathBehavior { SquadAnchorDeath::Disband }
+			, AnchorDeathTimer { -1 }
+			, AnchorDeathHeir { nullptr }
 		{ }
 
 		virtual ~ExtData() override = default;
@@ -139,6 +149,16 @@ public:
 	// for anything that is not a following squad member, so units that never
 	// use the feature pay one bool test.
 	static void ProcessSquadFollow(TechnoClass* pMember);
+
+	// Called from the death hook on a dying ANCHOR: arm every member's
+	// AnchorDeath reaction. Nothing is mutated here beyond our own ext data --
+	// killing or re-owning units inside the engine's damage path is unsafe, so
+	// the actual effect runs from the member's own tick.
+	static void ArmAnchorDeath(TechnoClass* pAnchor);
+
+	// Called from the per-frame AI hook: run an armed AnchorDeath reaction once
+	// its delay expires. No-op unless armed.
+	static void ProcessAnchorDeath(TechnoClass* pMember);
 
 	// The unit a click on pTechno should actually select, honouring
 	// MemberSelection=anchor. Returns pTechno when no redirection applies.

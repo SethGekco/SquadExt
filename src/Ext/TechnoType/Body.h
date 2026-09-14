@@ -72,6 +72,11 @@ struct SquadEntryData
 	Valueable<int> FollowRange;      // cells of slack before a member is recalled
 	Valueable<int> FollowDelay;      // frames between follow re-orders (anti-spam)
 
+	// -- what happens to members when the anchor dies --
+	Valueable<SquadAnchorDeath> AnchorDeath;
+	Valueable<int> AnchorDeathDelay;        // frames members linger before it fires
+	Nullable<TechnoTypeClass*> AnchorDeathHeir; // Promote: which member type inherits
+
 	// -- member cascade --
 	SquadMemberData MemberDefault;                // SquadN.Member.*
 	std::vector<SquadMemberData> MemberOverrides; // SquadN.MemberK.*
@@ -93,6 +98,9 @@ struct SquadEntryData
 		, Follow { true }
 		, FollowRange { 4 }
 		, FollowDelay { 15 }
+		, AnchorDeath { SquadAnchorDeath::Disband }
+		, AnchorDeathDelay { 0 }
+		, AnchorDeathHeir {}
 		, MemberDefault {}
 		, MemberOverrides {}
 	{ }

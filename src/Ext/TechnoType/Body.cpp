@@ -396,6 +396,15 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 		_snprintf_s(key, sizeof(key), "Squad%d.FollowDelay", idx);
 		entry.FollowDelay.Read(exINI, pSection, key);
 
+		_snprintf_s(key, sizeof(key), "Squad%d.AnchorDeath.Behavior", idx);
+		entry.AnchorDeath.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.AnchorDeath.Delay", idx);
+		entry.AnchorDeathDelay.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.AnchorDeath.Heir", idx);
+		entry.AnchorDeathHeir.Read(exINI, pSection, key);
+
 		if (i == this->SquadData.size())
 			this->SquadData.push_back(entry);
 		else
@@ -517,6 +526,9 @@ bool SquadEntryData::Serialize(T& stm)
 		.Process(this->Follow)
 		.Process(this->FollowRange)
 		.Process(this->FollowDelay)
+		.Process(this->AnchorDeath)
+		.Process(this->AnchorDeathDelay)
+		.Process(this->AnchorDeathHeir)
 		.Success();
 }
 

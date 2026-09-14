@@ -63,7 +63,34 @@ DEFINE_HOOK(0x4DA8A0, FootClass_Update_SquadExt, 0x6)
 	GET(FootClass* const, pThis, ESI);
 
 	TechnoExt::ProcessPendingSpawn(pThis);
+	TechnoExt::ProcessAnchorDeath(pThis);
 	TechnoExt::ProcessSquadFollow(pThis);
+
+	return 0;
+}
+
+// ============================================================================
+// Anchor death -- SquadN.AnchorDeath.Behavior
+//
+// Encyclopedia-checked: 0x702050 is the "destroyed by damage" site inside
+// TechnoClass::ReceiveDamage. ESI = TechnoClass*, the unit is still present
+// (coords and owner valid) but is about to be removed, and it is an established
+// multi-consumer address (Antares + Kratos + Phobos all hook it, all 0x6, all
+// return 0) so we chain cleanly.
+//
+// Deliberately NOT the destructor (0x6F4500): that fires for every removal path
+// -- selling, undeploying, transforming, script removal -- which would make a
+// sold anchor look like a killed one, and it is too late to read position.
+//
+// We only ARM the members here. Killing or re-owning units from inside the
+// engine's own damage path invites re-entrancy, so the effect runs from each
+// member's tick above.
+// ============================================================================
+DEFINE_HOOK(0x702050, TechnoClass_ReceiveDamage_AnchorDeath_SquadExt, 0x6)
+{
+	GET(TechnoClass* const, pThis, ESI);
+
+	TechnoExt::ArmAnchorDeath(pThis);
 
 	return 0;
 }
@@ -73,6 +100,7 @@ DEFINE_HOOK(0x43FE69, BuildingClass_AI_SquadExt, 0xA)
 	GET(BuildingClass*, pThis, ESI);
 
 	TechnoExt::ProcessPendingSpawn(pThis);
+	TechnoExt::ProcessAnchorDeath(pThis);
 
 	return 0;
 }

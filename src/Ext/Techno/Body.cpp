@@ -6,6 +6,7 @@
 #include <MapClass.h>
 #include <CellClass.h>
 #include <ScenarioClass.h>
+#include <RulesClass.h>
 
 #include <Utilities/Macro.h>
 #include <Utilities/Debug.h>
@@ -369,6 +370,10 @@ void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
 					pMemberExt->SquadFollowRange = pEntry->FollowRange;
 					pMemberExt->SquadFollowDelay = pEntry->FollowDelay;
 					pMemberExt->SquadFollowTimer = 0;
+					pMemberExt->AnchorDeathBehavior = pEntry->AnchorDeath;
+					pMemberExt->AnchorDeathHeir = pEntry->AnchorDeathHeir.isset()
+						? pEntry->AnchorDeathHeir.Get() : nullptr;
+					pMemberExt->AnchorDeathTimer = -1;
 				}
 
 				pExt->SquadMembers.push_back(pMember);
@@ -444,6 +449,150 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	pFoot->QueueMission(Mission::Move, false);
 
 	pExt->SquadFollowTimer = pExt->SquadFollowDelay > 0 ? pExt->SquadFollowDelay : 15;
+}
+
+// ============================================================================
+// Anchor death
+//
+// Two-stage, like spawning, and for the same reason: the death hook sits inside
+// TechnoClass::ReceiveDamage, and killing / re-owning / removing other units
+// from inside the engine's damage path invites re-entrancy. So the hook only
+// ARMS each member, and the member's own tick does the work a frame or more
+// later. That also gives AnchorDeath.Delay for free.
+// ============================================================================
+
+void TechnoExt::ArmAnchorDeath(TechnoClass* pAnchor)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pAnchor);
+	if (!pExt || pExt->SquadMembers.empty())
+		return;
+
+	auto const pType = pAnchor->GetTechnoType();
+	auto const pTypeExt = pType ? TechnoTypeExt::ExtMap.Find(pType) : nullptr;
+
+	// Delay comes from the type's first entry; the per-member behaviour was
+	// already copied down at spawn time, so a mixed-entry anchor still reacts
+	// per entry.
+	int delay = 0;
+	if (pTypeExt && !pTypeExt->SquadData.empty())
+		delay = pTypeExt->SquadData[0].AnchorDeathDelay;
+
+	for (auto const pMember : pExt->SquadMembers)
+	{
+		if (!pMember || !pMember->IsAlive)
+			continue;
+
+		auto const pMemberExt = TechnoExt::ExtMap.Find(pMember);
+		if (!pMemberExt || pMemberExt->AnchorDeathTimer >= 0)
+			continue; // already armed
+
+		pMemberExt->AnchorDeathTimer = delay > 0 ? delay : 0;
+	}
+}
+
+void TechnoExt::ProcessAnchorDeath(TechnoClass* pMember)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pMember);
+
+	// Cheapest possible rejection for the overwhelming majority of units.
+	if (!pExt || pExt->AnchorDeathTimer < 0)
+		return;
+
+	if (pExt->AnchorDeathTimer > 0)
+	{
+		--pExt->AnchorDeathTimer;
+		return;
+	}
+
+	pExt->AnchorDeathTimer = -1; // fire once
+
+	if (!pMember->IsAlive || pMember->InLimbo)
+		return;
+
+	auto const behavior = pExt->AnchorDeathBehavior;
+
+	// Every path ends with this member no longer belonging to a dead anchor.
+	auto const detach = [pExt]()
+	{
+		pExt->SquadAnchor = nullptr;
+		pExt->IsSquadMember = false;
+		pExt->SquadFollow = false;
+		pExt->MemberSelection = SquadMemberSelection::Independent;
+	};
+
+	switch (behavior)
+	{
+	case SquadAnchorDeath::Kill:
+	{
+		// A real death: counts as a loss and fires death weapons/anims.
+		int damage = pMember->Health * 2 + 1000;
+		pMember->ReceiveDamage(&damage, 0, RulesClass::Instance->C4Warhead,
+			nullptr, true, false, nullptr);
+		detach();
+		break;
+	}
+
+	case SquadAnchorDeath::Vanish:
+		// Gone with no loss and no death effects. Limbo first so the engine
+		// unregisters it from its cell before the object is torn down.
+		detach();
+		pMember->Limbo();
+		pMember->UnInit();
+		break;
+
+	case SquadAnchorDeath::Sell:
+		detach();
+		pMember->Sell(-1); // -1 = always sell
+		break;
+
+	case SquadAnchorDeath::Neutral:
+		if (auto const pNeutral = HouseClass::FindNeutral())
+			pMember->SetOwningHouse(pNeutral, false);
+		detach();
+		break;
+
+	case SquadAnchorDeath::Promote:
+	{
+		// The heir adopts the surviving siblings. Which member gets promoted is
+		// resolved by the FIRST survivor to reach this point, so it is
+		// deterministic in tick order rather than by any RNG. A matching
+		// AnchorDeath.Heir type wins if one is configured.
+		bool const wanted = !pExt->AnchorDeathHeir
+			|| pExt->AnchorDeathHeir == pMember->GetTechnoType();
+
+		if (!wanted)
+			break; // stay armed-but-fired; a later sibling takes the role
+
+		auto const pOldAnchor = pExt->SquadAnchor;
+		auto const pOldExt = pOldAnchor ? TechnoExt::ExtMap.Find(pOldAnchor) : nullptr;
+
+		pExt->SquadAnchor = nullptr;
+		pExt->IsSquadMember = false;
+
+		if (pOldExt)
+		{
+			for (auto const pSibling : pOldExt->SquadMembers)
+			{
+				if (!pSibling || pSibling == pMember || !pSibling->IsAlive)
+					continue;
+
+				if (auto const pSibExt = TechnoExt::ExtMap.Find(pSibling))
+				{
+					pSibExt->SquadAnchor = pMember;
+					pSibExt->AnchorDeathTimer = -1; // re-parented, not orphaned
+				}
+				pExt->SquadMembers.push_back(pSibling);
+			}
+			pOldExt->SquadMembers.clear();
+		}
+		break;
+	}
+
+	case SquadAnchorDeath::Disband:
+	default:
+		detach();
+		break;
+	}
 }
 
 // ============================================================================
@@ -557,6 +706,9 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->SquadFollowRange)
 		.Process(this->SquadFollowDelay)
 		.Process(this->SquadFollowTimer)
+		.Process(this->AnchorDeathBehavior)
+		.Process(this->AnchorDeathTimer)
+		.Process(this->AnchorDeathHeir)
 		;
 }
 

@@ -45,6 +45,19 @@ enum class SquadStance
 	Hunt,       // seek out enemies across the map
 };
 
+// What happens to the members when their anchor dies. Value names mirror
+// Phobos's AutoDeath.Behavior where they overlap, so the vocabulary is already
+// familiar to modders.
+enum class SquadAnchorDeath
+{
+	Disband,   // survive, ungroup, same owner, gain autonomy (default)
+	Promote,   // a member becomes the new anchor; the rest re-parent under it
+	Kill,      // members die: counts as a loss, fires death weapons/anims
+	Vanish,    // members disappear: no loss, no death effects
+	Sell,      // members refunded as if sold
+	Neutral,   // members transfer to the neutral/civilian house
+};
+
 // Rank to grant a spawned member.
 enum class SquadVeterancy
 {
@@ -101,6 +114,34 @@ namespace detail
 			if (_strcmpi(v, "member") == 0) { value = SquadActivateAs::Member; return true; }
 			if (_strcmpi(v, "independent") == 0) { value = SquadActivateAs::Independent; return true; }
 			Debug::INIParseFailed(pSection, pKey, v, "Expected any, member or independent");
+		}
+		return false;
+	}
+
+	template <>
+	inline bool read<SquadAnchorDeath>(SquadAnchorDeath& value, INI_EX& parser, const char* pSection, const char* pKey)
+	{
+		if (parser.ReadString(pSection, pKey))
+		{
+			auto const v = parser.value();
+			if (_strcmpi(v, "disband") == 0) { value = SquadAnchorDeath::Disband; return true; }
+			if (_strcmpi(v, "promote") == 0) { value = SquadAnchorDeath::Promote; return true; }
+			if (_strcmpi(v, "kill") == 0) { value = SquadAnchorDeath::Kill; return true; }
+			if (_strcmpi(v, "vanish") == 0) { value = SquadAnchorDeath::Vanish; return true; }
+			if (_strcmpi(v, "sell") == 0) { value = SquadAnchorDeath::Sell; return true; }
+			if (_strcmpi(v, "neutral") == 0) { value = SquadAnchorDeath::Neutral; return true; }
+			// 'tokiller' is documented in DESIGN.md but not implemented: the
+			// attacking house is a stack argument at the 0x702050 death site and
+			// its offset is not verified. Guessing it would be a silent-corruption
+			// bug, so the value is rejected loudly instead of quietly misbehaving.
+			if (_strcmpi(v, "tokiller") == 0)
+			{
+				Debug::INIParseFailed(pSection, pKey, v,
+					"ToKiller is not implemented yet (killer not resolvable at the death hook); use neutral");
+				return false;
+			}
+			Debug::INIParseFailed(pSection, pKey, v,
+				"Expected disband, promote, kill, vanish, sell or neutral");
 		}
 		return false;
 	}
