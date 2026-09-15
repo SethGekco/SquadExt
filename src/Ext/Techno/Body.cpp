@@ -125,6 +125,17 @@ namespace
 		pMember->QueueMission(mission, false);
 	}
 
+	const char* SpawnEventName(int flag)
+	{
+		switch (flag)
+		{
+		case SquadEvent_Produced: return "produced";
+		case SquadEvent_Death:    return "death";
+		case SquadEvent_Timer:    return "timer";
+		default:                  return "?";
+		}
+	}
+
 	void ApplyHealth(TechnoClass* pMember, int percent)
 	{
 		if (percent >= 100 || percent <= 0)
@@ -201,7 +212,13 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 	// A unit at generation G spawns only while G < LoopLimit, so LoopLimit=5
 	// yields five generations with the fifth sterile. 0 = unlimited.
 	if (loopLimit > 0 && myGen >= loopLimit)
+	{
+		// Logged because "sterile generation" and "roster never fired" are
+		// indistinguishable in game -- in both cases nothing appears.
+		Debug::Log("[SquadExt] %s: %s suppressed, generation %d has reached LoopLimit %d (sterile).\n",
+			pType->ID, SpawnEventName(eventFlag), myGen, loopLimit);
 		return;
+	}
 
 	auto const pOwner = pAnchor->Owner;
 
@@ -286,6 +303,7 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 
 	// ---- spawn ----
 	int budget = pTypeExt->MaxSpawnPerProduction;
+	int spawned = 0;
 
 	for (auto const pEntry : chosen)
 	{
@@ -367,6 +385,7 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 				ApplyVeterancy(pMember, pAnchor, vet);
 				ApplyHealth(pMember, health);
 				ApplyStance(pMember, pEntry->Stance);
+				++spawned;
 
 				if (auto const pMemberExt = TechnoExt::ExtMap.Find(pMember))
 				{
@@ -388,6 +407,20 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 			}
 		}
 	}
+
+	// Runtime liveness. The rules-parse line only proves the TAGS parsed; it
+	// cannot distinguish "the timer armed and fired" from "the timer never
+	// armed", nor "fired but every placement failed" from "never fired" -- and
+	// those look identical in game. Logging the count separates all three.
+	Debug::Log("[SquadExt] %s: %s fired, %d of %d entr%s spawned %d member%s%s.\n",
+		pType->ID,
+		SpawnEventName(eventFlag),
+		static_cast<int>(chosen.size()),
+		static_cast<int>(eligible.size()),
+		eligible.size() == 1 ? "y" : "ies",
+		spawned,
+		spawned == 1 ? "" : "s",
+		linkToAnchor ? "" : " (unlinked)");
 }
 
 // ============================================================================
