@@ -603,6 +603,42 @@ void TechnoExt::ArmAnchorDeath(TechnoClass* pAnchor)
 	if (pTypeExt && !pTypeExt->SquadData.empty())
 		delay = pTypeExt->SquadData[0].AnchorDeathDelay;
 
+	// Elect the heir HERE, while the member list is still intact.
+	//
+	// This cannot be deferred to the reaction: pointer invalidation nulls every
+	// member's SquadAnchor the instant the anchor is freed, so by the time the
+	// reaction runs there is no way left to enumerate the squad. Resolving it
+	// late is exactly why promote previously degraded into plain disband --
+	// the sibling walk found a null anchor and fell through.
+	TechnoClass* pHeir = nullptr;
+	{
+		TechnoClass* pFirstAlive = nullptr;
+		for (auto const pMember : pExt->SquadMembers)
+		{
+			if (!pMember || !pMember->IsAlive || pMember->InLimbo)
+				continue;
+
+			auto const pMemberExt = TechnoExt::ExtMap.Find(pMember);
+			if (!pMemberExt || pMemberExt->AnchorDeathBehavior != SquadAnchorDeath::Promote)
+				continue;
+
+			if (!pFirstAlive)
+				pFirstAlive = pMember;
+
+			// A configured Heir type wins; otherwise the first survivor does.
+			// Either way the choice is tick-order deterministic, never RNG.
+			if (pMemberExt->AnchorDeathHeir
+				&& pMemberExt->AnchorDeathHeir == pMember->GetTechnoType())
+			{
+				pHeir = pMember;
+				break;
+			}
+		}
+
+		if (!pHeir)
+			pHeir = pFirstAlive;
+	}
+
 	for (auto const pMember : pExt->SquadMembers)
 	{
 		if (!pMember || !pMember->IsAlive)
@@ -613,6 +649,15 @@ void TechnoExt::ArmAnchorDeath(TechnoClass* pAnchor)
 			continue; // already armed
 
 		pMemberExt->AnchorDeathTimer = delay > 0 ? delay : 0;
+		pMemberExt->AnchorDeathNewAnchor = pHeir;
+	}
+
+	if (pHeir)
+	{
+		Debug::Log("[SquadExt] %s died: electing %s as the new anchor for %d member(s).\n",
+			pType ? pType->ID : "?",
+			pHeir->GetTechnoType()->ID,
+			static_cast<int>(pExt->SquadMembers.size()));
 	}
 }
 
@@ -679,38 +724,39 @@ void TechnoExt::ProcessAnchorDeath(TechnoClass* pMember)
 
 	case SquadAnchorDeath::Promote:
 	{
-		// The heir adopts the surviving siblings. Which member gets promoted is
-		// resolved by the FIRST survivor to reach this point, so it is
-		// deterministic in tick order rather than by any RNG. A matching
-		// AnchorDeath.Heir type wins if one is configured.
-		bool const wanted = !pExt->AnchorDeathHeir
-			|| pExt->AnchorDeathHeir == pMember->GetTechnoType();
+		auto const pNewAnchor = pExt->AnchorDeathNewAnchor;
 
-		if (!wanted)
-			break; // stay armed-but-fired; a later sibling takes the role
-
-		auto const pOldAnchor = pExt->SquadAnchor;
-		auto const pOldExt = pOldAnchor ? TechnoExt::ExtMap.Find(pOldAnchor) : nullptr;
-
-		pExt->SquadAnchor = nullptr;
-		pExt->IsSquadMember = false;
-
-		if (pOldExt)
+		// The heir died between the election and now (or there never was one:
+		// every member gone, or this squad had no promote members). Nothing to
+		// re-parent to, so fall back to the safe outcome.
+		if (!pNewAnchor || !pNewAnchor->IsAlive || pNewAnchor->InLimbo)
 		{
-			for (auto const pSibling : pOldExt->SquadMembers)
-			{
-				if (!pSibling || pSibling == pMember || !pSibling->IsAlive)
-					continue;
-
-				if (auto const pSibExt = TechnoExt::ExtMap.Find(pSibling))
-				{
-					pSibExt->SquadAnchor = pMember;
-					pSibExt->AnchorDeathTimer = -1; // re-parented, not orphaned
-				}
-				pExt->SquadMembers.push_back(pSibling);
-			}
-			pOldExt->SquadMembers.clear();
+			detach();
+			break;
 		}
+
+		pExt->AnchorDeathNewAnchor = nullptr;
+
+		if (pNewAnchor == pMember)
+		{
+			// I am the heir: stop being a member, start being an anchor. My
+			// SquadMembers fills in as each sibling processes its own tick.
+			pExt->SquadAnchor = nullptr;
+			pExt->IsSquadMember = false;
+			pExt->SquadFollow = false; // nothing left to follow
+
+			Debug::Log("[SquadExt] %s promoted to anchor.\n",
+				pMember->GetTechnoType()->ID);
+			break;
+		}
+
+		// I am a survivor: re-parent under the heir and keep following it.
+		pExt->SquadAnchor = pNewAnchor;
+		pExt->IsSquadMember = true;
+
+		if (auto const pHeirExt = TechnoExt::ExtMap.Find(pNewAnchor))
+			pHeirExt->SquadMembers.push_back(pMember);
+
 		break;
 	}
 
@@ -803,6 +849,9 @@ void TechnoExt::ExtData::InvalidatePointer(void* ptr, bool bRemoved)
 	if (this->SquadAnchor == ptr)
 		this->SquadAnchor = nullptr;
 
+	if (this->AnchorDeathNewAnchor == ptr)
+		this->AnchorDeathNewAnchor = nullptr;
+
 	for (auto it = this->SquadMembers.begin(); it != this->SquadMembers.end(); )
 	{
 		if (*it == ptr)
@@ -835,6 +884,7 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->AnchorDeathBehavior)
 		.Process(this->AnchorDeathTimer)
 		.Process(this->AnchorDeathHeir)
+		.Process(this->AnchorDeathNewAnchor)
 		.Process(this->SquadEventTimer)
 		;
 }

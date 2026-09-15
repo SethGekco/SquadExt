@@ -71,6 +71,12 @@ public:
 		// -1 = not pending. Survives save/load so a delayed reaction is not lost.
 		int AnchorDeathTimer;
 		TechnoTypeClass* AnchorDeathHeir;
+		// For AnchorDeath=promote: the member elected to become the new anchor,
+		// resolved at ARM time while the dying anchor's member list is still
+		// intact. By the time the reaction runs, SquadAnchor has already been
+		// nulled by pointer invalidation, so the squad cannot be reconstructed
+		// from it -- this is the only surviving link.
+		TechnoClass* AnchorDeathNewAnchor;
 
 		// Countdown for the `timer` SpawnEvent. -1 = this unit has no timer
 		// entry, which is the case for essentially every unit in the game and
@@ -93,6 +99,7 @@ public:
 			, AnchorDeathBehavior { SquadAnchorDeath::Disband }
 			, AnchorDeathTimer { -1 }
 			, AnchorDeathHeir { nullptr }
+			, AnchorDeathNewAnchor { nullptr }
 			, SquadEventTimer { -1 }
 		{ }
 
