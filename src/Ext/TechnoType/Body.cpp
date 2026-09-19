@@ -396,6 +396,18 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 		_snprintf_s(key, sizeof(key), "Squad%d.FollowDelay", idx);
 		entry.FollowDelay.Read(exINI, pSection, key);
 
+		_snprintf_s(key, sizeof(key), "Squad%d.RegenRate", idx);
+		entry.RegenRate.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.RegenDelay", idx);
+		entry.RegenDelay.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.RegenRequiresEligible", idx);
+		entry.RegenRequiresEligible.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.MaxActive", idx);
+		entry.MaxActive.Read(exINI, pSection, key);
+
 		_snprintf_s(key, sizeof(key), "Squad%d.SpawnEvent", idx);
 		{
 			int mask = SquadEvent_Produced;
@@ -539,6 +551,10 @@ bool SquadEntryData::Serialize(T& stm)
 		.Process(this->Follow)
 		.Process(this->FollowRange)
 		.Process(this->FollowDelay)
+		.Process(this->RegenRate)
+		.Process(this->RegenDelay)
+		.Process(this->RegenRequiresEligible)
+		.Process(this->MaxActive)
 		.Process(this->SpawnEvents)
 		.Process(this->SpawnEventInterval)
 		.Process(this->SpawnEventChance)

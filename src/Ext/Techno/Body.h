@@ -83,6 +83,10 @@ public:
 		// keeps the per-frame check a single negative-int test.
 		int SquadEventTimer;
 
+		// Countdown for member regen on an ANCHOR. -1 = this unit has no regen
+		// entry, which keeps the per-frame check a single negative-int test.
+		int SquadRegenTimer;
+
 		ExtData(TechnoClass* OwnerObject) : Extension<TechnoClass>(OwnerObject)
 			, SquadAnchor { nullptr }
 			, SquadMembers {}
@@ -101,6 +105,7 @@ public:
 			, AnchorDeathHeir { nullptr }
 			, AnchorDeathNewAnchor { nullptr }
 			, SquadEventTimer { -1 }
+			, SquadRegenTimer { -1 }
 		{ }
 
 		virtual ~ExtData() override = default;
@@ -170,6 +175,10 @@ public:
 
 	// Called from the death hook: run the `death` trigger (deathsquad).
 	static void SpawnDeathSquad(TechnoClass* pAnchor);
+
+	// Called from the per-frame AI hook: top a squad back up to its configured
+	// composition after losses. No-op unless this unit has a regen entry.
+	static void ProcessSquadRegen(TechnoClass* pAnchor);
 
 	// Called from the per-frame AI hook: keep a member near its anchor. No-op
 	// for anything that is not a following squad member, so units that never

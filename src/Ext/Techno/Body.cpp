@@ -149,6 +149,98 @@ namespace
 	}
 }
 
+// Live members currently linked to this anchor. SquadMembers is scrubbed by
+// pointer invalidation, but a member can still be dead-but-not-yet-freed, so
+// the aliveness test is not redundant.
+static int CountLiveMembers(TechnoExt::ExtData* pExt)
+{
+	if (!pExt)
+		return 0;
+
+	int live = 0;
+	for (auto const pMember : pExt->SquadMembers)
+	{
+		if (pMember && pMember->IsAlive && !pMember->InLimbo)
+			++live;
+	}
+	return live;
+}
+
+// Create, place and configure ONE member of slot k. Shared by the event-driven
+// spawn pass and by regen, so both produce identically configured members.
+// Returns true if the member is alive on the map.
+static bool SpawnOneMember(TechnoClass* pAnchor, TechnoExt::ExtData* pExt,
+	const SquadEntryData* pEntry, size_t k, bool linkToAnchor,
+	int myGen, int childLimit)
+{
+	auto const pMemberType = pEntry->GetSlotType(k);
+	if (!pMemberType)
+		return false;
+
+	CoordStruct coords {};
+	if (!FindMemberCell(pMemberType, pAnchor, coords))
+		return false;
+
+	auto const pMember = abstract_cast<TechnoClass*>(pMemberType->CreateObject(pAnchor->Owner));
+	if (!pMember)
+	{
+		Debug::Log("[SquadExt] CreateObject failed for member %s.\n", pMemberType->ID);
+		return false;
+	}
+
+	// Link member -> anchor BEFORE placing it. Unlimbo raises the member's own
+	// pending-spawn flag, and the nested pass that follows must already see the
+	// correct IsSquadMember state and generation for ActivateAs / LoopLimit to
+	// resolve right.
+	if (auto const pMemberExt = linkToAnchor ? TechnoExt::ExtMap.Find(pMember) : nullptr)
+	{
+		pMemberExt->IsSquadMember = true;
+		pMemberExt->SquadAnchor = pAnchor;
+		pMemberExt->MemberSelection = pEntry->MemberSelection;
+		pMemberExt->SquadDepth = myGen + 1;
+		pMemberExt->SquadLoopLimit = childLimit;
+	}
+
+	int const facing = pEntry->GetSlotFacing(k);
+	DirType const dir = facing >= 0
+		? static_cast<DirType>(static_cast<unsigned char>(facing & 0xFF))
+		: DirType::North;
+
+	// Virtual call -- reaches the game's real Unlimbo. A *qualified* call
+	// (pMember->ObjectClass::Unlimbo) would bind to YRpp's R0 stub and silently
+	// no-op: the same footgun as ObjectClass::Select.
+	if (!pMember->Unlimbo(coords, dir))
+	{
+		Debug::Log("[SquadExt] Unlimbo failed for member %s.\n", pMemberType->ID);
+		pMember->UnInit();
+		return false;
+	}
+
+	ApplyVeterancy(pMember, pAnchor, pEntry->GetSlotVeterancy(k));
+	ApplyHealth(pMember, pEntry->GetSlotHealth(k));
+	ApplyStance(pMember, pEntry->Stance);
+
+	if (auto const pMemberExt = TechnoExt::ExtMap.Find(pMember))
+	{
+		pMemberExt->SquadFollow = pEntry->Follow;
+		pMemberExt->SquadFollowRange = pEntry->FollowRange;
+		pMemberExt->SquadFollowDelay = pEntry->FollowDelay;
+		pMemberExt->SquadFollowTimer = 0;
+		pMemberExt->AnchorDeathBehavior = pEntry->AnchorDeath;
+		pMemberExt->AnchorDeathHeir = pEntry->AnchorDeathHeir.isset()
+			? pEntry->AnchorDeathHeir.Get() : nullptr;
+		pMemberExt->AnchorDeathTimer = -1;
+	}
+
+	if (linkToAnchor && pExt)
+	{
+		pExt->SquadMembers.push_back(pMember);
+		pExt->MemberSelection = pEntry->MemberSelection;
+	}
+
+	return true;
+}
+
 // ============================================================================
 // Spawn trigger
 //
@@ -325,9 +417,6 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 
 			int const count = pEntry->GetSlotCount(k);
 			int const chance = pEntry->GetSlotChance(k);
-			auto const vet = pEntry->GetSlotVeterancy(k);
-			int const health = pEntry->GetSlotHealth(k);
-			int const facing = pEntry->GetSlotFacing(k);
 
 			for (int n = 0; n < count; ++n)
 			{
@@ -339,71 +428,23 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 					return;
 				}
 
-				if (!RollPercent(chance))
-					continue;
+				// MaxActive caps the LIVE population an anchor may sustain, which
+				// is what keeps a regenerating or repeating roster from filling
+				// the map. Only meaningful for linked members -- an unlinked
+				// deathsquad has no anchor to be counted against.
+				if (linkToAnchor && pEntry->MaxActive > 0
+					&& CountLiveMembers(pExt) >= pEntry->MaxActive)
+				{
+					break;
+				}
 
-				CoordStruct coords {};
-				if (!FindMemberCell(pMemberType, pAnchor, coords))
+				if (!RollPercent(chance))
 					continue;
 
 				--budget;
 
-				auto const pMember = abstract_cast<TechnoClass*>(pMemberType->CreateObject(pOwner));
-				if (!pMember)
-				{
-					Debug::Log("[SquadExt] CreateObject failed for member %s.\n", pMemberType->ID);
-					continue;
-				}
-
-				// Link member -> anchor BEFORE placing it. Unlimbo raises the
-				// member's own pending-spawn flag, and the nested pass that
-				// follows must already see the correct IsSquadMember state and
-				// generation for ActivateAs / LoopLimit to resolve right.
-				if (auto const pMemberExt = linkToAnchor ? TechnoExt::ExtMap.Find(pMember) : nullptr)
-				{
-					pMemberExt->IsSquadMember = true;
-					pMemberExt->SquadAnchor = pAnchor;
-					pMemberExt->MemberSelection = pEntry->MemberSelection;
-					pMemberExt->SquadDepth = myGen + 1;
-					pMemberExt->SquadLoopLimit = childLimit;
-				}
-
-				DirType const dir = facing >= 0
-					? static_cast<DirType>(static_cast<unsigned char>(facing & 0xFF))
-					: DirType::North;
-
-				// Virtual call -- reaches the game's real Unlimbo. A *qualified*
-				// call (pMember->ObjectClass::Unlimbo) would bind to YRpp's R0
-				// stub and silently no-op: the same footgun as ObjectClass::Select.
-				if (!pMember->Unlimbo(coords, dir))
-				{
-					Debug::Log("[SquadExt] Unlimbo failed for member %s.\n", pMemberType->ID);
-					pMember->UnInit();
-					continue;
-				}
-
-				ApplyVeterancy(pMember, pAnchor, vet);
-				ApplyHealth(pMember, health);
-				ApplyStance(pMember, pEntry->Stance);
-				++spawned;
-
-				if (auto const pMemberExt = TechnoExt::ExtMap.Find(pMember))
-				{
-					pMemberExt->SquadFollow = pEntry->Follow;
-					pMemberExt->SquadFollowRange = pEntry->FollowRange;
-					pMemberExt->SquadFollowDelay = pEntry->FollowDelay;
-					pMemberExt->SquadFollowTimer = 0;
-					pMemberExt->AnchorDeathBehavior = pEntry->AnchorDeath;
-					pMemberExt->AnchorDeathHeir = pEntry->AnchorDeathHeir.isset()
-						? pEntry->AnchorDeathHeir.Get() : nullptr;
-					pMemberExt->AnchorDeathTimer = -1;
-				}
-
-				if (linkToAnchor)
-				{
-					pExt->SquadMembers.push_back(pMember);
-					pExt->MemberSelection = pEntry->MemberSelection;
-				}
+				if (SpawnOneMember(pAnchor, pExt, pEntry, k, linkToAnchor, myGen, childLimit))
+					++spawned;
 			}
 		}
 	}
@@ -529,6 +570,106 @@ void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
 			break;
 		}
 	}
+
+	// Same treatment for regen: armed only if some entry asks for it.
+	for (auto const& entry : pTypeExt->SquadData)
+	{
+		if (entry.RegenRate > 0)
+		{
+			pExt->SquadRegenTimer = entry.RegenDelay >= 0
+				? entry.RegenDelay
+				: entry.RegenRate;
+			break;
+		}
+	}
+}
+
+void TechnoExt::ProcessSquadRegen(TechnoClass* pAnchor)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pAnchor);
+
+	// Cheapest possible rejection for the overwhelming majority of units.
+	if (!pExt || pExt->SquadRegenTimer < 0)
+		return;
+
+	if (!pAnchor->IsAlive || pAnchor->InLimbo)
+		return;
+
+	if (pExt->SquadRegenTimer > 0)
+	{
+		--pExt->SquadRegenTimer;
+		return;
+	}
+
+	auto const pType = pAnchor->GetTechnoType();
+	auto const pTypeExt = pType ? TechnoTypeExt::ExtMap.Find(pType) : nullptr;
+	if (!pTypeExt)
+	{
+		pExt->SquadRegenTimer = -1;
+		return;
+	}
+
+	auto const pOwner = pAnchor->Owner;
+	int const live = CountLiveMembers(pExt);
+	int rearm = -1;
+
+	for (auto const& entry : pTypeExt->SquadData)
+	{
+		if (entry.RegenRate <= 0)
+			continue;
+
+		rearm = entry.RegenRate; // keep ticking even if this pass replaces nothing
+
+		// A squad whose prerequisite has since been lost stops being topped up.
+		// Deliberately opt-out: losing the barracks should stop reinforcements.
+		if (entry.RegenRequiresEligible && !entry.EligibleFor(pOwner))
+			continue;
+
+		if (entry.MaxActive > 0 && live >= entry.MaxActive)
+			continue;
+
+		// Find the first slot that is short of its configured count. Deficit is
+		// measured BY TYPE, so two slots sharing a type pool together -- simpler
+		// than tracking slot identity across deaths, and indistinguishable in
+		// play unless the same type appears twice with different counts.
+		size_t const slots = entry.SlotCount();
+		for (size_t k = 0; k < slots; ++k)
+		{
+			auto const pMemberType = entry.GetSlotType(k);
+			if (!pMemberType || !entry.SlotAllowedFor(k, pOwner))
+				continue;
+
+			int target = 0;
+			for (size_t j = 0; j < slots; ++j)
+			{
+				if (entry.GetSlotType(j) == pMemberType && entry.SlotAllowedFor(j, pOwner))
+					target += entry.GetSlotCount(j);
+			}
+
+			int have = 0;
+			for (auto const pMember : pExt->SquadMembers)
+			{
+				if (pMember && pMember->IsAlive && !pMember->InLimbo
+					&& pMember->GetTechnoType() == pMemberType)
+					++have;
+			}
+
+			if (have >= target)
+				continue;
+
+			// One replacement per tick keeps a wiped squad trickling back rather
+			// than popping into existence all at once.
+			if (SpawnOneMember(pAnchor, pExt, &entry, k, true, 1, -1))
+			{
+				Debug::Log("[SquadExt] %s: regen replaced %s (%d/%d, %d live).\n",
+					pType->ID, pMemberType->ID, have + 1, target, live + 1);
+			}
+			break;
+		}
+		break; // only the first regen entry acts per tick
+	}
+
+	pExt->SquadRegenTimer = rearm;
 }
 
 void TechnoExt::ProcessSpawnTimer(TechnoClass* pAnchor)
@@ -886,6 +1027,7 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->AnchorDeathHeir)
 		.Process(this->AnchorDeathNewAnchor)
 		.Process(this->SquadEventTimer)
+		.Process(this->SquadRegenTimer)
 		;
 }
 

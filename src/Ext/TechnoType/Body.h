@@ -77,6 +77,12 @@ struct SquadEntryData
 	Valueable<int> SpawnEventInterval; // frames, for the timer trigger
 	Valueable<int> SpawnEventChance;   // 0-100 roll each time the event fires
 
+	// -- upkeep: replace losses and cap the live population --
+	Valueable<int> RegenRate;             // frames to replace a lost member; 0 = off
+	Valueable<int> RegenDelay;            // first replacement delay; <0 = use RegenRate
+	Valueable<bool> RegenRequiresEligible;// re-check Prerequisite/Houses before regen
+	Valueable<int> MaxActive;             // cap on LIVE members from this anchor; 0 = none
+
 	// -- what happens to members when the anchor dies --
 	Valueable<SquadAnchorDeath> AnchorDeath;
 	Valueable<int> AnchorDeathDelay;        // frames members linger before it fires
@@ -103,6 +109,10 @@ struct SquadEntryData
 		, Follow { true }
 		, FollowRange { 4 }
 		, FollowDelay { 15 }
+		, RegenRate { 0 }
+		, RegenDelay { -1 }
+		, RegenRequiresEligible { true }
+		, MaxActive { 0 }
 		, SpawnEvents { SquadEvent_Produced }
 		, SpawnEventInterval { 0 }
 		, SpawnEventChance { 100 }
