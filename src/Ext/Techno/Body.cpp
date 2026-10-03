@@ -149,21 +149,67 @@ namespace
 	}
 }
 
-// Live members currently linked to this anchor. SquadMembers is scrubbed by
-// pointer invalidation, but a member can still be dead-but-not-yet-freed, so
-// the aliveness test is not redundant.
-static int CountLiveMembers(TechnoExt::ExtData* pExt)
+// Has this member left the squad for good? Changing hands -- mind control,
+// capture, defection -- makes it somebody else's unit, so it must stop being
+// counted, stop following, and stop being topped up.
+//
+// Mind control in YR reassigns Owner, so the owner comparison already covers
+// it; MindControlledBy is checked too because a unit can be held by a
+// controller whose house still matches (allied controllers, scripted control).
+static bool MemberHasDeparted(TechnoClass* pAnchor, TechnoClass* pMember)
+{
+	if (!pMember || !pMember->IsAlive)
+		return true;
+
+	if (!pAnchor || !pAnchor->IsAlive)
+		return false; // anchor's fate is AnchorDeath's business, not ours
+
+	if (pMember->Owner != pAnchor->Owner)
+		return true;
+
+	if (pMember->MindControlledBy)
+		return true;
+
+	return false;
+}
+
+// Drop departed members and return how many remain.
+//
+// NOTE the deliberate absence of an InLimbo test. A member inside a transport
+// or garrisoned in a building is InLimbo but still very much part of the squad.
+// Excluding them was an exploitable hole: loading the squad into a bunker freed
+// up MaxActive headroom, the anchor spawned replacements, and unloading left the
+// squad permanently over its cap. Limbo is a location, not a departure.
+static int ReconcileMembers(TechnoClass* pAnchor, TechnoExt::ExtData* pExt)
 {
 	if (!pExt)
 		return 0;
 
-	int live = 0;
-	for (auto const pMember : pExt->SquadMembers)
+	auto& members = pExt->SquadMembers;
+
+	for (auto it = members.begin(); it != members.end(); )
 	{
-		if (pMember && pMember->IsAlive && !pMember->InLimbo)
-			++live;
+		if (MemberHasDeparted(pAnchor, *it))
+		{
+			// Sever the back-link too, so a mind-controlled member stops trying
+			// to walk home to an anchor that is no longer its own.
+			if (auto const pGoneExt = (*it) ? TechnoExt::ExtMap.Find(*it) : nullptr)
+			{
+				pGoneExt->SquadAnchor = nullptr;
+				pGoneExt->IsSquadMember = false;
+				pGoneExt->SquadFollow = false;
+				pGoneExt->AnchorDeathTimer = -1;
+				pGoneExt->MemberSelection = SquadMemberSelection::Independent;
+			}
+			it = members.erase(it);
+		}
+		else
+		{
+			++it;
+		}
 	}
-	return live;
+
+	return static_cast<int>(members.size());
 }
 
 // Create, place and configure ONE member of slot k. Shared by the event-driven
@@ -433,7 +479,7 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 				// the map. Only meaningful for linked members -- an unlinked
 				// deathsquad has no anchor to be counted against.
 				if (linkToAnchor && pEntry->MaxActive > 0
-					&& CountLiveMembers(pExt) >= pEntry->MaxActive)
+					&& ReconcileMembers(pAnchor, pExt) >= pEntry->MaxActive)
 				{
 					break;
 				}
@@ -496,6 +542,26 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 
 	if (!pMember->IsAlive || pMember->InLimbo)
 		return;
+
+	// A member that changed hands must stop following IMMEDIATELY, checked here
+	// on the member's own tick rather than waiting for the anchor to reconcile.
+	//
+	// Symptom this fixes: mind-controlled members wandered off toward "a random
+	// location". They were in fact still obeying this follow order and walking
+	// back to their original anchor -- now an enemy unit -- which from the
+	// controller's point of view is a unit marching somewhere senseless.
+	//
+	// The anchor-side reconcile is not sufficient on its own: it only runs for
+	// anchors that have regen or MaxActive, so a plain squad would never prune.
+	if (MemberHasDeparted(pAnchor, pMember))
+	{
+		pExt->SquadAnchor = nullptr;
+		pExt->IsSquadMember = false;
+		pExt->SquadFollow = false;
+		pExt->AnchorDeathTimer = -1;
+		pExt->MemberSelection = SquadMemberSelection::Independent;
+		return;
+	}
 
 	auto const pFoot = abstract_cast<FootClass*>(pMember);
 	if (!pFoot)
@@ -610,7 +676,7 @@ void TechnoExt::ProcessSquadRegen(TechnoClass* pAnchor)
 	}
 
 	auto const pOwner = pAnchor->Owner;
-	int const live = CountLiveMembers(pExt);
+	int const live = ReconcileMembers(pAnchor, pExt);
 	int rearm = -1;
 
 	for (auto const& entry : pTypeExt->SquadData)
