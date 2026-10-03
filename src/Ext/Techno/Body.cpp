@@ -461,6 +461,7 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 	// ---- spawn ----
 	int budget = pTypeExt->MaxSpawnPerProduction;
 	int spawned = 0;
+	int cappedAt = 0; // non-zero if we stopped because MaxActive was reached
 
 	for (auto const pEntry : chosen)
 	{
@@ -501,6 +502,7 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 				if (linkToAnchor && cap > 0
 					&& ReconcileMembers(pAnchor, pExt) >= cap)
 				{
+					cappedAt = cap;
 					break;
 				}
 
@@ -510,9 +512,32 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 				--budget;
 
 				if (SpawnOneMember(pAnchor, pExt, pEntry, k, linkToAnchor, myGen, childLimit))
+				{
 					++spawned;
+					pExt->MaxActiveLogged = false;
+				}
 			}
 		}
+	}
+
+	// Report the CAP separately from a genuine failure. Both used to surface as
+	// "spawned 0", which is actively misleading: a cap refusing to overfill the
+	// squad is correct behaviour, while 0 spawned from placement failure is a
+	// problem. Conflating them cost a misread of this very log.
+	//
+	// Reported once per saturation episode (MaxActiveLogged), because a capped
+	// timer entry otherwise repeats the same line every interval forever.
+	if (spawned == 0 && cappedAt > 0)
+	{
+		if (!pExt->MaxActiveLogged)
+		{
+			pExt->MaxActiveLogged = true;
+			Debug::Log("[SquadExt] %s: %s blocked, MaxActive %d reached (%d live). "
+				"Further blocks silent until a member spawns.\n",
+				pType->ID, SpawnEventName(eventFlag), cappedAt,
+				ReconcileMembers(pAnchor, pExt));
+		}
+		return;
 	}
 
 	// Runtime liveness. The rules-parse line only proves the TAGS parsed; it
@@ -1115,6 +1140,7 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->AnchorDeathNewAnchor)
 		.Process(this->SquadEventTimer)
 		.Process(this->SquadRegenTimer)
+		.Process(this->MaxActiveLogged)
 		;
 }
 

@@ -87,6 +87,11 @@ public:
 		// entry, which keeps the per-frame check a single negative-int test.
 		int SquadRegenTimer;
 
+		// True once we have reported hitting MaxActive, cleared the moment a
+		// member actually spawns. Without it a saturated timer entry logs an
+		// identical "blocked" line every interval -- 787 of them in one session.
+		bool MaxActiveLogged;
+
 		ExtData(TechnoClass* OwnerObject) : Extension<TechnoClass>(OwnerObject)
 			, SquadAnchor { nullptr }
 			, SquadMembers {}
@@ -106,6 +111,7 @@ public:
 			, AnchorDeathNewAnchor { nullptr }
 			, SquadEventTimer { -1 }
 			, SquadRegenTimer { -1 }
+			, MaxActiveLogged { false }
 		{ }
 
 		virtual ~ExtData() override = default;
