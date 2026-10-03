@@ -636,11 +636,18 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 			// Threshold, not inequality. Destination jitters by a cell or two
 			// constantly as the engine re-paths; only a move of real distance
 			// plausibly represents a NEW order.
-			int const minLeptons = (pExt->EchoMinChange > 0 ? pExt->EchoMinChange : 1) * 256;
-			int const dx = dest.X - pExt->EchoedDest.X;
-			int const dy = dest.Y - pExt->EchoedDest.Y;
+			//
+			// Compared in CELLS, not leptons. The lepton form overflowed: a
+			// delta is up to map-size * 256, so on a 500-cell map dx reaches
+			// 128000 and dx*dx is 1.6e10 -- past INT_MAX, wrapping negative and
+			// making the comparison meaningless for exactly the long-range
+			// orders it most needs to catch. Rex runs 500-1000 cell maps under
+			// MapSizeExt, so this was not theoretical.
+			int const minCells = pExt->EchoMinChange > 0 ? pExt->EchoMinChange : 1;
+			int const dxCells = (dest.X - pExt->EchoedDest.X) / 256;
+			int const dyCells = (dest.Y - pExt->EchoedDest.Y) / 256;
 			bool const changed = !pExt->HasEchoedDest
-				|| (dx * dx + dy * dy) >= (minLeptons * minLeptons);
+				|| (dxCells * dxCells + dyCells * dyCells) >= (minCells * minCells);
 
 			if (changed)
 			{
@@ -678,9 +685,14 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 				// member just departed/garrisoned" from "echo did nothing at all".
 				pExt->EchoTimer = pExt->EchoDelay > 0 ? pExt->EchoDelay : 0;
 
-				Debug::Log("[SquadExt] %s: OrderEcho move -> %d member%s (%d skipped), "
+				// The anchor pointer is in the line on purpose. Without it these
+				// lines cannot be attributed: with regen and promote churning
+				// there are many live GHOST anchors at once, each throttling
+				// independently, and I mis-read consecutive lines as one unit's
+				// history when they were several units interleaved.
+				Debug::Log("[SquadExt] %s(%p): OrderEcho move -> %d member%s (%d skipped), "
 					"cell %d,%d.\n",
-					pAnchor->GetTechnoType()->ID,
+					pAnchor->GetTechnoType()->ID, pAnchor,
 					echoed, echoed == 1 ? "" : "s", skipped,
 					dest.X / 256, dest.Y / 256);
 			}
@@ -717,8 +729,8 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 
 		// skipped reported here too: "0 members" alone could not say whether the
 		// squad was empty, garrisoned, or stolen.
-		Debug::Log("[SquadExt] %s: OrderEcho attack -> %d member%s (%d skipped), target %s.\n",
-			pAnchor->GetTechnoType()->ID,
+		Debug::Log("[SquadExt] %s(%p): OrderEcho attack -> %d member%s (%d skipped), target %s.\n",
+			pAnchor->GetTechnoType()->ID, pAnchor,
 			echoed, echoed == 1 ? "" : "s", skipped,
 			pTarget->GetTechnoType()->ID);
 	}
