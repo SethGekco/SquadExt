@@ -212,6 +212,25 @@ static int ReconcileMembers(TechnoClass* pAnchor, TechnoExt::ExtData* pExt)
 	return static_cast<int>(members.size());
 }
 
+// The binding live-member cap for an entry: the TIGHTER of the unit-level
+// umbrella (Squad.MaxActive) and the entry's own (SquadN.MaxActive). Either may
+// be 0 meaning "no cap of mine", so a plain min() would be wrong -- 0 must lose,
+// not win. Returns 0 when neither caps.
+//
+// The umbrella exists because a per-entry cap only binds the entry that sets it.
+// With EntrySelect=all, one uncapped entry could grow the squad without limit no
+// matter what its siblings capped; the unit-level value binds every entry.
+static int BindingMaxActive(TechnoTypeExt::ExtData* pTypeExt, const SquadEntryData* pEntry)
+{
+	int const umbrella = pTypeExt ? pTypeExt->MaxActive.Get() : 0;
+	int const own = pEntry ? pEntry->MaxActive.Get() : 0;
+
+	if (umbrella > 0 && own > 0)
+		return umbrella < own ? umbrella : own;
+
+	return umbrella > 0 ? umbrella : own;
+}
+
 // Create, place and configure ONE member of slot k. Shared by the event-driven
 // spawn pass and by regen, so both produce identically configured members.
 // Returns true if the member is alive on the map.
@@ -478,8 +497,9 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 				// is what keeps a regenerating or repeating roster from filling
 				// the map. Only meaningful for linked members -- an unlinked
 				// deathsquad has no anchor to be counted against.
-				if (linkToAnchor && pEntry->MaxActive > 0
-					&& ReconcileMembers(pAnchor, pExt) >= pEntry->MaxActive)
+				int const cap = BindingMaxActive(pTypeExt, pEntry);
+				if (linkToAnchor && cap > 0
+					&& ReconcileMembers(pAnchor, pExt) >= cap)
 				{
 					break;
 				}
@@ -691,7 +711,8 @@ void TechnoExt::ProcessSquadRegen(TechnoClass* pAnchor)
 		if (entry.RegenRequiresEligible && !entry.EligibleFor(pOwner))
 			continue;
 
-		if (entry.MaxActive > 0 && live >= entry.MaxActive)
+		int const cap = BindingMaxActive(pTypeExt, &entry);
+		if (cap > 0 && live >= cap)
 			continue;
 
 		// Find the first slot that is short of its configured count. Deficit is

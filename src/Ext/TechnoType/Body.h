@@ -174,12 +174,17 @@ public:
 		Valueable<SquadEntrySelect> EntrySelect;
 		Valueable<int> LoopLimit;              // generations of nesting; 0 = unlimited
 		Valueable<int> MaxSpawnPerProduction;  // hard anti-hang cap on total spawns
+		// Umbrella cap on LIVE members from this anchor, across EVERY entry.
+		// Unlike the per-entry SquadN.MaxActive it also binds entries that set
+		// no cap of their own, which is the gap it exists to close. 0 = none.
+		Valueable<int> MaxActive;
 
 		ExtData(TechnoTypeClass* OwnerObject) : Extension<TechnoTypeClass>(OwnerObject)
 			, SquadData {}
 			, EntrySelect { SquadEntrySelect::First }
 			, LoopLimit { 0 }
 			, MaxSpawnPerProduction { 999 }
+			, MaxActive { 0 }
 		{ }
 
 		virtual ~ExtData() = default;

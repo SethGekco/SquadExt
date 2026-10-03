@@ -293,6 +293,7 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 	this->EntrySelect.Read(exINI, pSection, "Squad.EntrySelect");
 	this->LoopLimit.Read(exINI, pSection, "Squad.LoopLimit");
 	this->MaxSpawnPerProduction.Read(exINI, pSection, "Squad.MaxSpawnPerProduction");
+	this->MaxActive.Read(exINI, pSection, "Squad.MaxActive");
 
 	// Iterate size + 1 so vector contents can be overridden via scenario rules.
 	for (size_t i = 0; i <= this->SquadData.size(); ++i)
@@ -479,6 +480,7 @@ void TechnoTypeExt::ExtData::Serialize(T& Stm)
 		.Process(this->EntrySelect)
 		.Process(this->LoopLimit)
 		.Process(this->MaxSpawnPerProduction)
+		.Process(this->MaxActive)
 		;
 }
 
