@@ -304,6 +304,8 @@ static bool SpawnOneMember(TechnoClass* pAnchor, TechnoExt::ExtData* pExt,
 		// OrderEcho lives on the ANCHOR (it is the one being ordered), so it is
 		// recorded here as members are attached rather than on the member.
 		pExt->OrderEcho = pEntry->OrderEcho;
+		pExt->EchoDelay = pEntry->OrderEchoDelay;
+		pExt->EchoMinChange = pEntry->OrderEchoMinChange;
 	}
 
 	return true;
@@ -617,6 +619,12 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 	if (!pAnchor->IsAlive || pAnchor->InLimbo || pExt->SquadMembers.empty())
 		return;
 
+	if (pExt->EchoTimer > 0)
+	{
+		--pExt->EchoTimer;
+		return;
+	}
+
 	// Movement: re-issue only when the anchor's destination actually changes,
 	// otherwise we would re-order every frame and thrash pathing.
 	if (auto const pAnchorFoot = abstract_cast<FootClass*>(pAnchor))
@@ -624,10 +632,15 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 		if (auto const pDest = pAnchorFoot->Destination)
 		{
 			CoordStruct const dest = pDest->GetCoords();
+
+			// Threshold, not inequality. Destination jitters by a cell or two
+			// constantly as the engine re-paths; only a move of real distance
+			// plausibly represents a NEW order.
+			int const minLeptons = (pExt->EchoMinChange > 0 ? pExt->EchoMinChange : 1) * 256;
+			int const dx = dest.X - pExt->EchoedDest.X;
+			int const dy = dest.Y - pExt->EchoedDest.Y;
 			bool const changed = !pExt->HasEchoedDest
-				|| dest.X != pExt->EchoedDest.X
-				|| dest.Y != pExt->EchoedDest.Y
-				|| dest.Z != pExt->EchoedDest.Z;
+				|| (dx * dx + dy * dy) >= (minLeptons * minLeptons);
 
 			if (changed)
 			{
@@ -663,6 +676,8 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 				// anchor's destination actually changed, so one line per command.
 				// `skipped` is the useful half: it separates "echo is working, the
 				// member just departed/garrisoned" from "echo did nothing at all".
+				pExt->EchoTimer = pExt->EchoDelay > 0 ? pExt->EchoDelay : 0;
+
 				Debug::Log("[SquadExt] %s: OrderEcho move -> %d member%s (%d skipped), "
 					"cell %d,%d.\n",
 					pAnchor->GetTechnoType()->ID,
@@ -683,20 +698,28 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 		pExt->EchoedTarget = pTarget;
 
 		int echoed = 0;
+		int skipped = 0;
 
 		for (auto const pMember : pExt->SquadMembers)
 		{
 			if (MemberHasDeparted(pAnchor, pMember) || pMember->InLimbo)
+			{
+				++skipped;
 				continue;
+			}
 
 			pMember->SetTarget(pTarget);
 			pMember->QueueMission(Mission::Attack, false);
 			++echoed;
 		}
 
-		Debug::Log("[SquadExt] %s: OrderEcho attack -> %d member%s, target %s.\n",
+		pExt->EchoTimer = pExt->EchoDelay > 0 ? pExt->EchoDelay : 0;
+
+		// skipped reported here too: "0 members" alone could not say whether the
+		// squad was empty, garrisoned, or stolen.
+		Debug::Log("[SquadExt] %s: OrderEcho attack -> %d member%s (%d skipped), target %s.\n",
 			pAnchor->GetTechnoType()->ID,
-			echoed, echoed == 1 ? "" : "s",
+			echoed, echoed == 1 ? "" : "s", skipped,
 			pTarget->GetTechnoType()->ID);
 	}
 }
@@ -1294,6 +1317,9 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->EchoedDest)
 		.Process(this->HasEchoedDest)
 		.Process(this->EchoedTarget)
+		.Process(this->EchoDelay)
+		.Process(this->EchoMinChange)
+		.Process(this->EchoTimer)
 		;
 }
 

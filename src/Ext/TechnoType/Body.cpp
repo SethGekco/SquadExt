@@ -400,6 +400,12 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 		_snprintf_s(key, sizeof(key), "Squad%d.OrderEcho", idx);
 		entry.OrderEcho.Read(exINI, pSection, key);
 
+		_snprintf_s(key, sizeof(key), "Squad%d.OrderEcho.Delay", idx);
+		entry.OrderEchoDelay.Read(exINI, pSection, key);
+
+		_snprintf_s(key, sizeof(key), "Squad%d.OrderEcho.MinChange", idx);
+		entry.OrderEchoMinChange.Read(exINI, pSection, key);
+
 		_snprintf_s(key, sizeof(key), "Squad%d.RegenRate", idx);
 		entry.RegenRate.Read(exINI, pSection, key);
 
@@ -557,6 +563,8 @@ bool SquadEntryData::Serialize(T& stm)
 		.Process(this->FollowRange)
 		.Process(this->FollowDelay)
 		.Process(this->OrderEcho)
+		.Process(this->OrderEchoDelay)
+		.Process(this->OrderEchoMinChange)
 		.Process(this->RegenRate)
 		.Process(this->RegenDelay)
 		.Process(this->RegenRequiresEligible)

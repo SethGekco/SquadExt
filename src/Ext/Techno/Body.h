@@ -103,6 +103,9 @@ public:
 		// Target IS a techno, so it is a pointer -- and is scrubbed in
 		// InvalidatePointer alongside the anchor/member links.
 		TechnoClass* EchoedTarget;
+		int EchoDelay;        // resolved from the entry
+		int EchoMinChange;    // resolved from the entry
+		int EchoTimer;        // counts down between echoes
 
 		ExtData(TechnoClass* OwnerObject) : Extension<TechnoClass>(OwnerObject)
 			, SquadAnchor { nullptr }
@@ -128,6 +131,9 @@ public:
 			, EchoedDest { }
 			, HasEchoedDest { false }
 			, EchoedTarget { nullptr }
+			, EchoDelay { 30 }
+			, EchoMinChange { 3 }
+			, EchoTimer { 0 }
 		{ }
 
 		virtual ~ExtData() override = default;

@@ -79,6 +79,13 @@ struct SquadEntryData
 
 	// -- order echo: members mirror the anchor's orders --
 	Valueable<SquadOrderEcho> OrderEcho;
+	// FootClass::Destination is the LIVE movement target, not a record of the
+	// player's order -- the engine rewrites it constantly while pathing, chasing
+	// a target or scattering. Echoing every change re-ordered members 691 times
+	// in one session and reset their pathing each time. These two filters
+	// approximate "a new order" from that noisy signal.
+	Valueable<int> OrderEchoDelay;     // min frames between echoes
+	Valueable<int> OrderEchoMinChange; // min cells the destination must move
 
 	// -- upkeep: replace losses and cap the live population --
 	Valueable<int> RegenRate;             // frames to replace a lost member; 0 = off
@@ -113,6 +120,8 @@ struct SquadEntryData
 		, FollowRange { 4 }
 		, FollowDelay { 15 }
 		, OrderEcho { SquadOrderEcho::None }
+		, OrderEchoDelay { 30 }
+		, OrderEchoMinChange { 3 }
 		, RegenRate { 0 }
 		, RegenDelay { -1 }
 		, RegenRequiresEligible { true }
