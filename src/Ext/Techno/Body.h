@@ -92,6 +92,18 @@ public:
 		// identical "blocked" line every interval -- 787 of them in one session.
 		bool MaxActiveLogged;
 
+		// Order echo, resolved from the spawning entry onto the ANCHOR.
+		SquadOrderEcho OrderEcho;
+		// Last order we propagated, so we only re-issue on CHANGE rather than
+		// every tick. The destination is kept as COORDS, not a pointer: a
+		// FootClass Destination can be a CellClass, which our invalidation
+		// filter does not cover, so latching that pointer would dangle.
+		CoordStruct EchoedDest;
+		bool HasEchoedDest;
+		// Target IS a techno, so it is a pointer -- and is scrubbed in
+		// InvalidatePointer alongside the anchor/member links.
+		TechnoClass* EchoedTarget;
+
 		ExtData(TechnoClass* OwnerObject) : Extension<TechnoClass>(OwnerObject)
 			, SquadAnchor { nullptr }
 			, SquadMembers {}
@@ -112,6 +124,10 @@ public:
 			, SquadEventTimer { -1 }
 			, SquadRegenTimer { -1 }
 			, MaxActiveLogged { false }
+			, OrderEcho { SquadOrderEcho::None }
+			, EchoedDest { }
+			, HasEchoedDest { false }
+			, EchoedTarget { nullptr }
 		{ }
 
 		virtual ~ExtData() override = default;
@@ -181,6 +197,10 @@ public:
 
 	// Called from the death hook: run the `death` trigger (deathsquad).
 	static void SpawnDeathSquad(TechnoClass* pAnchor);
+
+	// Called from the per-frame AI hook on an ANCHOR: mirror its orders onto its
+	// members. No-op unless this unit has an echoing entry.
+	static void ProcessOrderEcho(TechnoClass* pAnchor);
 
 	// Called from the per-frame AI hook: top a squad back up to its configured
 	// composition after losses. No-op unless this unit has a regen entry.

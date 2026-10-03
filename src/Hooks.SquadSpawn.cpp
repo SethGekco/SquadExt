@@ -65,6 +65,7 @@ DEFINE_HOOK(0x4DA8A0, FootClass_Update_SquadExt, 0x6)
 	TechnoExt::ProcessPendingSpawn(pThis);
 	TechnoExt::ProcessSpawnTimer(pThis);
 	TechnoExt::ProcessSquadRegen(pThis);
+	TechnoExt::ProcessOrderEcho(pThis);
 	TechnoExt::ProcessAnchorDeath(pThis);
 	TechnoExt::ProcessSquadFollow(pThis);
 
@@ -108,6 +109,7 @@ DEFINE_HOOK(0x43FE69, BuildingClass_AI_SquadExt, 0xA)
 	TechnoExt::ProcessPendingSpawn(pThis);
 	TechnoExt::ProcessSpawnTimer(pThis);
 	TechnoExt::ProcessSquadRegen(pThis);
+	TechnoExt::ProcessOrderEcho(pThis);
 	TechnoExt::ProcessAnchorDeath(pThis);
 
 	return 0;

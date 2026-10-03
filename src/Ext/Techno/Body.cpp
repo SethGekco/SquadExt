@@ -301,6 +301,9 @@ static bool SpawnOneMember(TechnoClass* pAnchor, TechnoExt::ExtData* pExt,
 	{
 		pExt->SquadMembers.push_back(pMember);
 		pExt->MemberSelection = pEntry->MemberSelection;
+		// OrderEcho lives on the ANCHOR (it is the one being ordered), so it is
+		// recorded here as members are attached rather than on the member.
+		pExt->OrderEcho = pEntry->OrderEcho;
 	}
 
 	return true;
@@ -553,6 +556,98 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 		spawned,
 		spawned == 1 ? "" : "s",
 		linkToAnchor ? "" : " (unlinked)");
+}
+
+
+// ============================================================================
+// Order echo -- SquadN.OrderEcho
+//
+// Deliberately implemented by OBSERVING the anchor's order state, not by
+// intercepting the click.
+//
+// The obvious seat is DisplayClass::ActiveClickWith (0x4AE7B3), which is how
+// Phobos PR #352 did it -- but that is a FULL-FUNCTION REPLACEMENT, and the
+// encyclopedia is explicit that a standalone DLL must not take it: Phobos AND
+// Kratos both hook 0x4AE95E *inside* that function as release behaviour, and a
+// replacement jumping to the tail silently skips them. PR #1993 also replaces
+// the same address, so two reimplementations are mutually exclusive. There is
+// no verified ClickedMission address in the PDB map to hook instead, and I will
+// not guess one.
+//
+// Watching Destination/Target costs no new hook at all, and has two advantages
+// over interception: it works no matter HOW the anchor got its order (player
+// click, AI, trigger, script), and the order is LATCHED onto each member, so
+// members keep executing after the anchor dies -- which is what the design
+// asked for.
+//
+// Cost: one tick of latency, and it mirrors the destination rather than the
+// exact click semantics (attack-move nuance is not reproduced).
+// ============================================================================
+
+void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pAnchor);
+
+	// Cheapest possible rejection for the overwhelming majority of units.
+	if (!pExt || pExt->OrderEcho == SquadOrderEcho::None)
+		return;
+
+	if (!pAnchor->IsAlive || pAnchor->InLimbo || pExt->SquadMembers.empty())
+		return;
+
+	// Movement: re-issue only when the anchor's destination actually changes,
+	// otherwise we would re-order every frame and thrash pathing.
+	if (auto const pAnchorFoot = abstract_cast<FootClass*>(pAnchor))
+	{
+		if (auto const pDest = pAnchorFoot->Destination)
+		{
+			CoordStruct const dest = pDest->GetCoords();
+			bool const changed = !pExt->HasEchoedDest
+				|| dest.X != pExt->EchoedDest.X
+				|| dest.Y != pExt->EchoedDest.Y
+				|| dest.Z != pExt->EchoedDest.Z;
+
+			if (changed)
+			{
+				pExt->EchoedDest = dest;
+				pExt->HasEchoedDest = true;
+
+				for (auto const pMember : pExt->SquadMembers)
+				{
+					if (MemberHasDeparted(pAnchor, pMember) || pMember->InLimbo)
+						continue;
+
+					if (auto const pFoot = abstract_cast<FootClass*>(pMember))
+					{
+						// Virtual calls -- SetDestination is RX and QueueMission
+						// is R0 in YRpp, so qualified calls would silently no-op.
+						pFoot->SetDestination(pDest, true);
+						pFoot->QueueMission(Mission::Move, false);
+					}
+				}
+			}
+		}
+	}
+
+	if (pExt->OrderEcho != SquadOrderEcho::All)
+		return;
+
+	// Attack: only echo techno targets. A cell target (attack-move on ground)
+	// is already covered by the movement echo above.
+	auto const pTarget = abstract_cast<TechnoClass*>(pAnchor->Target);
+	if (pTarget && pTarget != pExt->EchoedTarget)
+	{
+		pExt->EchoedTarget = pTarget;
+
+		for (auto const pMember : pExt->SquadMembers)
+		{
+			if (MemberHasDeparted(pAnchor, pMember) || pMember->InLimbo)
+				continue;
+
+			pMember->SetTarget(pTarget);
+			pMember->QueueMission(Mission::Attack, false);
+		}
+	}
 }
 
 // ============================================================================
@@ -1105,6 +1200,9 @@ void TechnoExt::ExtData::InvalidatePointer(void* ptr, bool bRemoved)
 	if (this->AnchorDeathNewAnchor == ptr)
 		this->AnchorDeathNewAnchor = nullptr;
 
+	if (this->EchoedTarget == ptr)
+		this->EchoedTarget = nullptr;
+
 	for (auto it = this->SquadMembers.begin(); it != this->SquadMembers.end(); )
 	{
 		if (*it == ptr)
@@ -1141,6 +1239,10 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->SquadEventTimer)
 		.Process(this->SquadRegenTimer)
 		.Process(this->MaxActiveLogged)
+		.Process(this->OrderEcho)
+		.Process(this->EchoedDest)
+		.Process(this->HasEchoedDest)
+		.Process(this->EchoedTarget)
 		;
 }
 

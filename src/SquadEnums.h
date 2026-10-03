@@ -34,6 +34,14 @@ enum class SquadActivateAs
 	Independent,  // only when this unit is NOT a squad member
 };
 
+// Whether members mirror the orders given to their anchor.
+enum class SquadOrderEcho
+{
+	None,  // members ignore the anchor's orders (default)
+	Move,  // members mirror where the anchor is told to go
+	All,   // movement plus attack targets
+};
+
 // Standing order given to a member the moment it spawns, so a squad that has no
 // follow behaviour still *does* something instead of standing inert.
 enum class SquadStance
@@ -160,6 +168,22 @@ namespace detail
 			if (_strcmpi(v, "member") == 0) { value = SquadActivateAs::Member; return true; }
 			if (_strcmpi(v, "independent") == 0) { value = SquadActivateAs::Independent; return true; }
 			Debug::INIParseFailed(pSection, pKey, v, "Expected any, member or independent");
+		}
+		return false;
+	}
+
+	template <>
+	inline bool read<SquadOrderEcho>(SquadOrderEcho& value, INI_EX& parser, const char* pSection, const char* pKey)
+	{
+		if (parser.ReadString(pSection, pKey))
+		{
+			auto const v = parser.value();
+			if (_strcmpi(v, "none") == 0 || _strcmpi(v, "no") == 0)
+			{ value = SquadOrderEcho::None; return true; }
+			if (_strcmpi(v, "move") == 0) { value = SquadOrderEcho::Move; return true; }
+			if (_strcmpi(v, "all") == 0 || _strcmpi(v, "yes") == 0)
+			{ value = SquadOrderEcho::All; return true; }
+			Debug::INIParseFailed(pSection, pKey, v, "Expected none, move or all");
 		}
 		return false;
 	}

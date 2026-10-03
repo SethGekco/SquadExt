@@ -77,6 +77,9 @@ struct SquadEntryData
 	Valueable<int> SpawnEventInterval; // frames, for the timer trigger
 	Valueable<int> SpawnEventChance;   // 0-100 roll each time the event fires
 
+	// -- order echo: members mirror the anchor's orders --
+	Valueable<SquadOrderEcho> OrderEcho;
+
 	// -- upkeep: replace losses and cap the live population --
 	Valueable<int> RegenRate;             // frames to replace a lost member; 0 = off
 	Valueable<int> RegenDelay;            // first replacement delay; <0 = use RegenRate
@@ -109,6 +112,7 @@ struct SquadEntryData
 		, Follow { true }
 		, FollowRange { 4 }
 		, FollowDelay { 15 }
+		, OrderEcho { SquadOrderEcho::None }
 		, RegenRate { 0 }
 		, RegenDelay { -1 }
 		, RegenRequiresEligible { true }
