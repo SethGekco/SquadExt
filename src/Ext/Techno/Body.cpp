@@ -634,10 +634,16 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 				pExt->EchoedDest = dest;
 				pExt->HasEchoedDest = true;
 
+				int echoed = 0;
+				int skipped = 0;
+
 				for (auto const pMember : pExt->SquadMembers)
 				{
 					if (MemberHasDeparted(pAnchor, pMember) || pMember->InLimbo)
+					{
+						++skipped;
 						continue;
+					}
 
 					if (auto const pFoot = abstract_cast<FootClass*>(pMember))
 					{
@@ -645,8 +651,23 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 						// is R0 in YRpp, so qualified calls would silently no-op.
 						pFoot->SetDestination(pDest, true);
 						pFoot->QueueMission(Mission::Move, false);
+						++echoed;
+					}
+					else
+					{
+						++skipped; // a building member cannot be ordered to move
 					}
 				}
+
+				// Logged per ORDER, not per frame -- this branch only runs when the
+				// anchor's destination actually changed, so one line per command.
+				// `skipped` is the useful half: it separates "echo is working, the
+				// member just departed/garrisoned" from "echo did nothing at all".
+				Debug::Log("[SquadExt] %s: OrderEcho move -> %d member%s (%d skipped), "
+					"cell %d,%d.\n",
+					pAnchor->GetTechnoType()->ID,
+					echoed, echoed == 1 ? "" : "s", skipped,
+					dest.X / 256, dest.Y / 256);
 			}
 		}
 	}
@@ -661,6 +682,8 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 	{
 		pExt->EchoedTarget = pTarget;
 
+		int echoed = 0;
+
 		for (auto const pMember : pExt->SquadMembers)
 		{
 			if (MemberHasDeparted(pAnchor, pMember) || pMember->InLimbo)
@@ -668,7 +691,13 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 
 			pMember->SetTarget(pTarget);
 			pMember->QueueMission(Mission::Attack, false);
+			++echoed;
 		}
+
+		Debug::Log("[SquadExt] %s: OrderEcho attack -> %d member%s, target %s.\n",
+			pAnchor->GetTechnoType()->ID,
+			echoed, echoed == 1 ? "" : "s",
+			pTarget->GetTechnoType()->ID);
 	}
 }
 
