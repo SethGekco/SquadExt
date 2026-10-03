@@ -361,6 +361,28 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 	if (!pExt || !pTypeExt || !pTypeExt->HasSquads())
 		return;
 
+	// Does ANY entry even answer this trigger? Checked before anything else so
+	// a unit with no roster for this event returns in silence.
+	//
+	// This ordering is load-bearing, not tidiness. With the LoopLimit test
+	// first, every dying nested unit logged "death suppressed ... (sterile)"
+	// even when it had no death entry whatsoever -- 14 such lines appeared in
+	// one session for [GHOST], which only ever declares a `produced` roster.
+	// A diagnostic that reports a decision about a roster that does not exist is
+	// worse than no diagnostic.
+	bool answersEvent = false;
+	for (auto const& entry : pTypeExt->SquadData)
+	{
+		if (entry.SpawnEvents & eventFlag)
+		{
+			answersEvent = true;
+			break;
+		}
+	}
+
+	if (!answersEvent)
+		return;
+
 	// Generation of this unit; 0 and 1 both mean top-level.
 	int const myGen = pExt->SquadDepth > 0 ? pExt->SquadDepth : 1;
 
