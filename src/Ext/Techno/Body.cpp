@@ -793,8 +793,23 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	if (!pFoot)
 		return; // buildings cannot follow anything
 
-	// Do not override a player's own order, or an attack in progress. We only
-	// take over when the member is idling.
+	// May we issue a move right now?
+	//
+	// Idling is the easy yes. The hard case is a member already executing a
+	// move: originally we refused outright, so as never to steal an order the
+	// player gave. That was too blunt. A member mid-walk could not be
+	// re-targeted, so it marched all the way to a stale position before
+	// reconsidering -- which with a CHRONO MINER anchor looks absurd: the miner
+	// teleports to the refinery, the squad keeps walking to the ore patch it
+	// left, strolls straight past the miner on the way, and repeats.
+	//
+	// So we now re-target a move that WE issued, and still never touch one we
+	// did not. Ours is identified by the member still heading for the exact
+	// cell we last sent it to; if the destination differs, something else
+	// (the player, an AI script, OrderEcho) has given the order and it is not
+	// ours to overwrite.
+	bool mayOrder = false;
+
 	switch (pFoot->CurrentMission)
 	{
 	case Mission::Guard:
@@ -802,15 +817,59 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	case Mission::Sleep:
 	case Mission::None:
 	case Mission::Stop:
+		mayOrder = true;
+		pExt->FollowOrderActive = false; // whatever we ordered is finished
 		break;
+
+	case Mission::Move:
+		if (pExt->FollowOrderActive)
+		{
+			auto const pCur = pFoot->Destination;
+			CoordStruct const cur = pCur ? pCur->GetCoords() : CoordStruct::Empty;
+
+			// Same cell => still our order. Compared in cells so sub-cell
+			// placement jitter does not read as "someone else re-ordered it".
+			if (pCur
+				&& cur.X / 256 == pExt->FollowDest.X / 256
+				&& cur.Y / 256 == pExt->FollowDest.Y / 256)
+			{
+				mayOrder = true;
+			}
+			else
+			{
+				pExt->FollowOrderActive = false; // overridden; hands off
+			}
+		}
+		break;
+
 	default:
-		return; // busy: moving, attacking, entering, harvesting...
+		break; // attacking, entering, harvesting... leave it alone
 	}
+
+	if (!mayOrder)
+		return;
 
 	// Leptons -> cells. 256 leptons per cell.
 	int const rangeCells = pExt->SquadFollowRange > 0 ? pExt->SquadFollowRange : 4;
 	if (pMember->DistanceFrom(pAnchor) <= rangeCells * 256)
-		return; // close enough
+	{
+		// Arrived (or the anchor came to us). Release the claim so a later
+		// player order is never mistaken for ours.
+		pExt->FollowOrderActive = false;
+		return;
+	}
+
+	CoordStruct const anchorPos = pAnchor->GetCoords();
+
+	// Already heading to where the anchor now is? Nothing to re-issue. This is
+	// what keeps the re-target path from re-ordering every FollowDelay while a
+	// member legitimately walks a long way.
+	if (pExt->FollowOrderActive
+		&& anchorPos.X / 256 == pExt->FollowDest.X / 256
+		&& anchorPos.Y / 256 == pExt->FollowDest.Y / 256)
+	{
+		return;
+	}
 
 	auto const pCell = MapClass::Instance.TryGetCellAt(pAnchor->GetMapCoords());
 	if (!pCell)
@@ -821,6 +880,8 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	pFoot->SetDestination(pCell, true);
 	pFoot->QueueMission(Mission::Move, false);
 
+	pExt->FollowDest = pCell->GetCoords();
+	pExt->FollowOrderActive = true;
 	pExt->SquadFollowTimer = pExt->SquadFollowDelay > 0 ? pExt->SquadFollowDelay : 15;
 }
 
@@ -1318,6 +1379,8 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->SquadFollowRange)
 		.Process(this->SquadFollowDelay)
 		.Process(this->SquadFollowTimer)
+		.Process(this->FollowDest)
+		.Process(this->FollowOrderActive)
 		.Process(this->AnchorDeathBehavior)
 		.Process(this->AnchorDeathTimer)
 		.Process(this->AnchorDeathHeir)

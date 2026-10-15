@@ -64,6 +64,12 @@ public:
 		int SquadFollowRange;   // cells of slack before we recall the member
 		int SquadFollowDelay;   // frames between re-orders
 		int SquadFollowTimer;   // counts down; 0 = may re-order
+		// Where OUR last follow order sent this member, and whether that order
+		// is believed to still be the one it is executing. Together these let
+		// Follow re-target its own in-progress move (needed when the anchor
+		// teleports) WITHOUT ever overriding an order the player gave.
+		CoordStruct FollowDest;
+		bool FollowOrderActive;
 
 		// Anchor-death handling, copied from the spawning entry onto each member.
 		SquadAnchorDeath AnchorDeathBehavior;
@@ -120,6 +126,8 @@ public:
 			, SquadFollowRange { 4 }
 			, SquadFollowDelay { 15 }
 			, SquadFollowTimer { 0 }
+			, FollowDest { }
+			, FollowOrderActive { false }
 			, AnchorDeathBehavior { SquadAnchorDeath::Disband }
 			, AnchorDeathTimer { -1 }
 			, AnchorDeathHeir { nullptr }
