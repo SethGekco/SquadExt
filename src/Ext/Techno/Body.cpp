@@ -756,12 +756,6 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	if (!pExt || !pExt->SquadFollow)
 		return;
 
-	if (pExt->SquadFollowTimer > 0)
-	{
-		--pExt->SquadFollowTimer;
-		return;
-	}
-
 	auto const pAnchor = pExt->SquadAnchor;
 	if (!pAnchor || !pAnchor->IsAlive || pAnchor->InLimbo)
 		return;
@@ -779,6 +773,10 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	//
 	// The anchor-side reconcile is not sufficient on its own: it only runs for
 	// anchors that have regen or MaxActive, so a plain squad would never prune.
+	//
+	// Deliberately checked BEFORE the re-order throttle: a member that has
+	// defected must be released on the very next frame, not up to FollowDelay
+	// frames later.
 	if (MemberHasDeparted(pAnchor, pMember))
 	{
 		pExt->SquadAnchor = nullptr;
@@ -793,21 +791,56 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	if (!pFoot)
 		return; // buildings cannot follow anything
 
+	// Leptons -> cells. 256 leptons per cell.
+	int const rangeCells = pExt->SquadFollowRange > 0 ? pExt->SquadFollowRange : 4;
+
+	CoordStruct const anchorPos = pAnchor->GetCoords();
+
+	// Has the ANCHOR left the place we last sent this member? Measured in cells
+	// against our own last order, so it is true the instant a CHRONO MINER warps
+	// away and stays true for as long as the member is still walking to where
+	// the miner used to be.
+	// Compared in CELL space, matching OrderEcho: squared lepton deltas overflow
+	// INT_MAX past roughly 180 cells, and Rex runs 500-1000 cell maps.
+	int const dxCells = anchorPos.X / 256 - pExt->FollowDest.X / 256;
+	int const dyCells = anchorPos.Y / 256 - pExt->FollowDest.Y / 256;
+	bool const anchorMoved = pExt->FollowOrderActive
+		&& (dxCells * dxCells + dyCells * dyCells) > (rangeCells * rangeCells);
+
+	// Re-order throttle. A member walking a long way does not need a fresh
+	// order every frame -- but a teleport is exactly the case that must NOT
+	// wait, so a displaced anchor bypasses the countdown. Without the bypass a
+	// warp is reacted to up to FollowDelay frames late, every warp.
+	if (pExt->SquadFollowTimer > 0)
+	{
+		--pExt->SquadFollowTimer;
+		if (!anchorMoved)
+			return;
+	}
+
 	// May we issue a move right now?
 	//
 	// Idling is the easy yes. The hard case is a member already executing a
-	// move: originally we refused outright, so as never to steal an order the
-	// player gave. That was too blunt. A member mid-walk could not be
-	// re-targeted, so it marched all the way to a stale position before
-	// reconsidering -- which with a CHRONO MINER anchor looks absurd: the miner
-	// teleports to the refinery, the squad keeps walking to the ore patch it
-	// left, strolls straight past the miner on the way, and repeats.
+	// move. Two earlier attempts at this were both wrong:
 	//
-	// So we now re-target a move that WE issued, and still never touch one we
-	// did not. Ours is identified by the member still heading for the exact
-	// cell we last sent it to; if the destination differs, something else
-	// (the player, an AI script, OrderEcho) has given the order and it is not
-	// ours to overwrite.
+	//  1. Refuse outright, so as never to steal a player order. Too blunt: a
+	//     member mid-walk could not be re-targeted at all, so it marched the
+	//     whole way to a stale position before reconsidering.
+	//
+	//  2. Re-target only a move whose Destination still equals the cell we last
+	//     sent the member to. This LOOKED safe and was worse than useless:
+	//     FootClass::Destination is rewritten by the engine as it re-paths a
+	//     long walk (the same volatility that forced OrderEcho onto a change
+	//     threshold), so the comparison fails for reasons that have nothing to
+	//     do with the player. The claim was then dropped and the member was
+	//     never re-targeted again -- i.e. the exact stubborn march to a stale
+	//     teleport cell that the equality test was added to fix.
+	//
+	// So ownership is now tracked by OUR OWN flag and nothing else. While
+	// FollowOrderActive is set, the move in progress is ours and we re-target
+	// it against the anchor's LIVE position. A member whose mission is anything
+	// other than moving or idling -- attacking, entering, harvesting,
+	// unloading -- is busy and is never touched.
 	bool mayOrder = false;
 
 	switch (pFoot->CurrentMission)
@@ -822,24 +855,10 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 		break;
 
 	case Mission::Move:
-		if (pExt->FollowOrderActive)
-		{
-			auto const pCur = pFoot->Destination;
-			CoordStruct const cur = pCur ? pCur->GetCoords() : CoordStruct::Empty;
-
-			// Same cell => still our order. Compared in cells so sub-cell
-			// placement jitter does not read as "someone else re-ordered it".
-			if (pCur
-				&& cur.X / 256 == pExt->FollowDest.X / 256
-				&& cur.Y / 256 == pExt->FollowDest.Y / 256)
-			{
-				mayOrder = true;
-			}
-			else
-			{
-				pExt->FollowOrderActive = false; // overridden; hands off
-			}
-		}
+		// Ours to re-target, and ONLY ours: FollowOrderActive is set solely by
+		// the order we issue below, and cleared the moment the member idles,
+		// arrives, or defects.
+		mayOrder = pExt->FollowOrderActive;
 		break;
 
 	default:
@@ -849,8 +868,6 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	if (!mayOrder)
 		return;
 
-	// Leptons -> cells. 256 leptons per cell.
-	int const rangeCells = pExt->SquadFollowRange > 0 ? pExt->SquadFollowRange : 4;
 	if (pMember->DistanceFrom(pAnchor) <= rangeCells * 256)
 	{
 		// Arrived (or the anchor came to us). Release the claim so a later
@@ -858,8 +875,6 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 		pExt->FollowOrderActive = false;
 		return;
 	}
-
-	CoordStruct const anchorPos = pAnchor->GetCoords();
 
 	// Already heading to where the anchor now is? Nothing to re-issue. This is
 	// what keeps the re-target path from re-ordering every FollowDelay while a
@@ -874,6 +889,22 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	auto const pCell = MapClass::Instance.TryGetCellAt(pAnchor->GetMapCoords());
 	if (!pCell)
 		return;
+
+	// Logged ONLY for the displaced-anchor case. An unconditional line here
+	// fires every FollowDelay for every following member and drowns the log;
+	// this one appears exactly when the anchor has jumped away from where we
+	// last sent the member, which is the behaviour being verified.
+	if (anchorMoved)
+	{
+		Debug::Log("[SquadExt] %s(%p): anchor %s(%p) moved %d,%d cells off our last "
+			"order -> follow re-target to cell %d,%d (mission %d).\n",
+			pMember->GetTechnoType()->ID, pMember,
+			pAnchor->GetTechnoType()->ID, pAnchor,
+			dxCells, dyCells,
+			static_cast<int>(pCell->MapCoords.X),
+			static_cast<int>(pCell->MapCoords.Y),
+			static_cast<int>(pFoot->CurrentMission));
+	}
 
 	// Virtual calls -- SetDestination is RX and QueueMission is R0 in YRpp, so
 	// qualified calls would silently no-op.
