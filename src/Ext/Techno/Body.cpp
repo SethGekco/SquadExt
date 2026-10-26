@@ -298,6 +298,9 @@ static bool SpawnOneMember(TechnoClass* pAnchor, TechnoExt::ExtData* pExt,
 		pMemberExt->AnchorDeathTimer = -1;
 		pMemberExt->SquadSelectable = pEntry->Selectable;
 		pMemberExt->SquadRecruitable = pEntry->Recruitable;
+		pMemberExt->SquadOrderable = pEntry->Orderable;
+		pMemberExt->SquadOrderRange = pEntry->OrderRange;
+		pMemberExt->MemberStance = pEntry->Stance;
 	}
 
 	if (linkToAnchor && pExt)
@@ -675,6 +678,16 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 						pFoot->SetDestination(pDest, true);
 						pFoot->QueueMission(Mission::Move, false);
 						++echoed;
+
+						// Mark it as the SQUAD's order, not a foreign one. Both
+						// Follow and the Orderable check key "is this ours" on
+						// these two fields, so an echoed order must set them or
+						// Orderable=no would cancel the echo it just received.
+						if (auto const pMemberExt = TechnoExt::ExtMap.Find(pMember))
+						{
+							pMemberExt->FollowDest = dest;
+							pMemberExt->FollowOrderActive = true;
+						}
 					}
 					else
 					{
@@ -800,6 +813,150 @@ void TechnoExt::ProcessSquadConscription(TechnoClass* pMember)
 		Debug::Log("[SquadExt] %s(%p): released from an AI team (Recruitable=no). "
 			"Further releases for this member are silent.\n",
 			pMember->GetTechnoType()->ID, pMember);
+	}
+}
+
+namespace
+{
+	// Walk a member to its anchor's CURRENT cell and record that the order is
+	// ours. Shared by Follow and by the OrderRange leash: both want exactly this
+	// and must agree on the bookkeeping, or one would treat the other's order as
+	// foreign. `report` and the deltas exist only for the Follow log line.
+	bool OrderMemberToAnchor(FootClass* pFoot, TechnoExt::ExtData* pExt,
+		TechnoClass* pAnchor, bool report, int dxCells, int dyCells)
+	{
+		auto const pMember = static_cast<TechnoClass*>(pFoot);
+
+		auto const pCell = MapClass::Instance.TryGetCellAt(pAnchor->GetMapCoords());
+		if (!pCell)
+			return false;
+
+		// Logged ONLY for the displaced-anchor case. An unconditional line here
+	// fires every FollowDelay for every following member and drowns the log;
+	// this one appears exactly when the anchor has jumped away from where we
+	// last sent the member, which is the behaviour being verified.
+		if (report)
+		{
+			Debug::Log("[SquadExt] %s(%p): anchor %s(%p) moved %d,%d cells off our last "
+				"order -> follow re-target to cell %d,%d (mission %d).\n",
+				pMember->GetTechnoType()->ID, pMember,
+				pAnchor->GetTechnoType()->ID, pAnchor,
+				dxCells, dyCells,
+				static_cast<int>(pCell->MapCoords.X),
+				static_cast<int>(pCell->MapCoords.Y),
+				static_cast<int>(pFoot->CurrentMission));
+		}
+
+		// Virtual calls -- SetDestination is RX and QueueMission is R0 in YRpp,
+		// so qualified calls would silently no-op.
+		pFoot->SetDestination(pCell, true);
+		pFoot->QueueMission(Mission::Move, false);
+
+		pExt->FollowDest = pCell->GetCoords();
+		pExt->FollowOrderActive = true;
+		pExt->SquadFollowTimer = pExt->SquadFollowDelay > 0 ? pExt->SquadFollowDelay : 15;
+		return true;
+	}
+}
+
+// Enforce Orderable / OrderRange.
+//
+// These are two INDEPENDENT axes from Selectable, because the useful
+// combinations are not expressible otherwise: selectable and freely orderable,
+// selectable but only orderable inside a radius, selectable but deaf to orders,
+// or not selectable at all.
+//
+// Implemented reactively, in a tick we already own, rather than by refusing the
+// click: that would mean wrapping CellClickedAction / ObjectClickedAction, whose
+// vtable slot addresses I would have to derive rather than read from a verified
+// source, and a wrong slot is a crash in a live game. The cost of doing it here
+// is that a refused order shows roughly one frame of movement before the member
+// reverts, and that it cannot grey out the cursor.
+void TechnoExt::ProcessSquadOrders(TechnoClass* pMember)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pMember);
+	if (!pExt)
+		return;
+
+	// Fast path: one bool and one int test for every unit that opted into
+	// neither feature, which is every unit in the game by default.
+	if (pExt->SquadOrderable && pExt->SquadOrderRange <= 0)
+		return;
+
+	if (!pExt->IsSquadMember)
+		return;
+
+	auto const pAnchor = pExt->SquadAnchor;
+	if (!pAnchor || !pAnchor->IsAlive || pAnchor->InLimbo)
+		return;
+
+	if (!pMember->IsAlive || pMember->InLimbo)
+		return;
+
+	// A defector is no longer ours to restrain; the follow tick releases it.
+	if (MemberHasDeparted(pAnchor, pMember))
+		return;
+
+	auto const pFoot = abstract_cast<FootClass*>(pMember);
+	if (!pFoot)
+		return; // a building member cannot be walked anywhere
+
+	// Never fight the squad's OWN orders. Follow and OrderEcho both set these,
+	// so an echoed order is not mistaken for a foreign one.
+	if (pExt->FollowOrderActive)
+		return;
+
+	// Leash first: being too far away outranks what the member was told to do,
+	// and unlike Follow this applies mid-walk, so the radius actually bounds
+	// where the player can take it rather than only where it may idle.
+	if (pExt->SquadOrderRange > 0
+		&& pMember->DistanceFrom(pAnchor) > pExt->SquadOrderRange * 256)
+	{
+		OrderMemberToAnchor(pFoot, pExt, pAnchor, false, 0, 0);
+		return;
+	}
+
+	if (pExt->SquadOrderable)
+		return;
+
+	// Orderable=no: revert movement orders to the member's stance.
+	//
+	// Only MOVEMENT missions are cancelled. Mission::Attack is deliberately left
+	// alone because a player-issued attack and the engine's own retaliation are
+	// the same mission -- cancelling it would leave a guard unable to shoot back,
+	// which is a worse bug than the one being fixed.
+	switch (pFoot->CurrentMission)
+	{
+	case Mission::Move:
+	case Mission::QMove:
+	case Mission::Enter:
+	case Mission::Capture:
+	case Mission::Patrol:
+	case Mission::AttackMove:
+		break;
+	default:
+		return;
+	}
+
+	if (pExt->MemberStance == SquadStance::None)
+	{
+		// ApplyStance no-ops for `none` on purpose (it means "leave the engine
+		// default alone" at spawn). Refusing an order still has to cancel it,
+		// so fall back to a plain stop rather than silently doing nothing.
+		pMember->QueueMission(Mission::Stop, false);
+	}
+	else
+	{
+		ApplyStance(pMember, pExt->MemberStance);
+	}
+
+	if (!pExt->OrderCancelLogged)
+	{
+		pExt->OrderCancelLogged = true;
+		Debug::Log("[SquadExt] %s(%p): refused an outside order (Orderable=no), "
+			"reverted to stance %d. Further refusals for this member are silent.\n",
+			pMember->GetTechnoType()->ID, pMember,
+			static_cast<int>(pExt->MemberStance));
 	}
 }
 
@@ -941,35 +1098,10 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 		return;
 	}
 
-	auto const pCell = MapClass::Instance.TryGetCellAt(pAnchor->GetMapCoords());
-	if (!pCell)
+	if (!OrderMemberToAnchor(pFoot, pExt, pAnchor, anchorMoved, dxCells, dyCells))
 		return;
-
-	// Logged ONLY for the displaced-anchor case. An unconditional line here
-	// fires every FollowDelay for every following member and drowns the log;
-	// this one appears exactly when the anchor has jumped away from where we
-	// last sent the member, which is the behaviour being verified.
-	if (anchorMoved)
-	{
-		Debug::Log("[SquadExt] %s(%p): anchor %s(%p) moved %d,%d cells off our last "
-			"order -> follow re-target to cell %d,%d (mission %d).\n",
-			pMember->GetTechnoType()->ID, pMember,
-			pAnchor->GetTechnoType()->ID, pAnchor,
-			dxCells, dyCells,
-			static_cast<int>(pCell->MapCoords.X),
-			static_cast<int>(pCell->MapCoords.Y),
-			static_cast<int>(pFoot->CurrentMission));
-	}
-
-	// Virtual calls -- SetDestination is RX and QueueMission is R0 in YRpp, so
-	// qualified calls would silently no-op.
-	pFoot->SetDestination(pCell, true);
-	pFoot->QueueMission(Mission::Move, false);
-
-	pExt->FollowDest = pCell->GetCoords();
-	pExt->FollowOrderActive = true;
-	pExt->SquadFollowTimer = pExt->SquadFollowDelay > 0 ? pExt->SquadFollowDelay : 15;
 }
+
 
 // ---- trigger entry points -------------------------------------------------
 
@@ -1484,6 +1616,10 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->SquadSelectable)
 		.Process(this->SquadRecruitable)
 		.Process(this->ConscriptionLogged)
+		.Process(this->SquadOrderable)
+		.Process(this->SquadOrderRange)
+		.Process(this->MemberStance)
+		.Process(this->OrderCancelLogged)
 		;
 }
 

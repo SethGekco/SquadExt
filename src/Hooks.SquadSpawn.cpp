@@ -70,6 +70,9 @@ DEFINE_HOOK(0x4DA8A0, FootClass_Update_SquadExt, 0x6)
 	// Before Follow: a member released from a team this frame should be walking
 	// back to its anchor on the same frame, not one frame behind the AI.
 	TechnoExt::ProcessSquadConscription(pThis);
+	// Before Follow: refusing a foreign order releases the member back to its
+	// stance, and Follow may then legitimately recall it in the same frame.
+	TechnoExt::ProcessSquadOrders(pThis);
 	TechnoExt::ProcessSquadFollow(pThis);
 
 	return 0;

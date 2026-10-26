@@ -79,6 +79,19 @@ public:
 		// already-true test.
 		bool SquadSelectable;
 		bool SquadRecruitable;
+		// Does this member obey orders from outside the squad, and how far from
+		// its anchor may it be taken? SquadOrderRange 0 = no leash. The pair
+		// defaults to (true, 0) so the per-frame check costs one bool and one
+		// int test for every unit in the game.
+		bool SquadOrderable;
+		int SquadOrderRange;
+		// The stance the spawning entry gave this member, kept so an order we
+		// refuse can be reverted to it. Applied once at spawn was not enough
+		// once refusing orders became a feature.
+		SquadStance MemberStance;
+		// One-shot, same reasoning as ConscriptionLogged below.
+		bool OrderCancelLogged;
+
 		// One-shot: we report the FIRST release per member and then stay quiet.
 		// If LiberateMember ever failed to clear Team we would otherwise emit an
 		// identical line every frame -- the same flood that made 787 MaxActive
@@ -145,6 +158,10 @@ public:
 			, SquadSelectable { true }
 			, SquadRecruitable { true }
 			, ConscriptionLogged { false }
+			, SquadOrderable { true }
+			, SquadOrderRange { 0 }
+			, MemberStance { SquadStance::Guard }
+			, OrderCancelLogged { false }
 			, AnchorDeathBehavior { SquadAnchorDeath::Disband }
 			, AnchorDeathTimer { -1 }
 			, AnchorDeathHeir { nullptr }
@@ -236,6 +253,10 @@ public:
 	// Called from the per-frame AI hook: top a squad back up to its configured
 	// composition after losses. No-op unless this unit has a regen entry.
 	static void ProcessSquadRegen(TechnoClass* pAnchor);
+
+	// Called from the per-frame AI hook: enforce Orderable / OrderRange on a
+	// member. No-op unless this unit is a member that opted into one of them.
+	static void ProcessSquadOrders(TechnoClass* pMember);
 
 	// Called from the per-frame AI hook: release a member the AI has recruited
 	// into a team. No-op unless this unit is a member with Recruitable=no, so

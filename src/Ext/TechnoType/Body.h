@@ -90,6 +90,15 @@ struct SquadEntryData
 	// whole time, because the cap bounds how many are ALIVE and not how many
 	// the AI may march off and lose.
 	Valueable<bool> Recruitable;
+	// Does a member obey orders from OUTSIDE the squad? no = it reverts to its
+	// Stance whenever something else tries to walk it somewhere. Independent of
+	// Selectable: a member can be selectable and still ignore orders, which is
+	// not expressible if the two are the same tag.
+	Valueable<bool> Orderable;
+	// Leash, in cells. 0 = none. A member further than this from its anchor is
+	// walked back, enforced continuously rather than only once it goes idle --
+	// so the player may order it about, but only inside this radius.
+	Valueable<int> OrderRange;
 
 	// -- when this entry fires (bitmask of SquadSpawnEventFlags) --
 	int SpawnEvents;
@@ -140,6 +149,8 @@ struct SquadEntryData
 		, FollowDelay { 15 }
 		, Selectable { true }
 		, Recruitable { true }
+		, Orderable { true }
+		, OrderRange { 0 }
 		, OrderEcho { SquadOrderEcho::None }
 		, OrderEchoDelay { 30 }
 		, OrderEchoMinChange { 3 }
