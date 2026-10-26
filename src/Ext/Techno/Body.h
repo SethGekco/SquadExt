@@ -71,6 +71,20 @@ public:
 		CoordStruct FollowDest;
 		bool FollowOrderActive;
 
+		// Copied from the spawning entry onto each member.
+		//
+		// Both default TRUE so that every unit in the game -- none of which is a
+		// squad member -- short-circuits the per-frame conscription check on its
+		// first bool test, and so that the Select wrapper's fast path is a single
+		// already-true test.
+		bool SquadSelectable;
+		bool SquadRecruitable;
+		// One-shot: we report the FIRST release per member and then stay quiet.
+		// If LiberateMember ever failed to clear Team we would otherwise emit an
+		// identical line every frame -- the same flood that made 787 MaxActive
+		// refusals look like 787 placement failures.
+		bool ConscriptionLogged;
+
 		// Anchor-death handling, copied from the spawning entry onto each member.
 		SquadAnchorDeath AnchorDeathBehavior;
 		// >= 0 once the anchor has died: frames left before the behaviour fires.
@@ -128,6 +142,9 @@ public:
 			, SquadFollowTimer { 0 }
 			, FollowDest { }
 			, FollowOrderActive { false }
+			, SquadSelectable { true }
+			, SquadRecruitable { true }
+			, ConscriptionLogged { false }
 			, AnchorDeathBehavior { SquadAnchorDeath::Disband }
 			, AnchorDeathTimer { -1 }
 			, AnchorDeathHeir { nullptr }
@@ -219,6 +236,15 @@ public:
 	// Called from the per-frame AI hook: top a squad back up to its configured
 	// composition after losses. No-op unless this unit has a regen entry.
 	static void ProcessSquadRegen(TechnoClass* pAnchor);
+
+	// Called from the per-frame AI hook: release a member the AI has recruited
+	// into a team. No-op unless this unit is a member with Recruitable=no, so
+	// everything else pays one already-true bool test.
+	static void ProcessSquadConscription(TechnoClass* pMember);
+
+	// False when a click or band-select must skip this unit entirely
+	// (Selectable=no). Safe to call on anything.
+	static bool IsSquadSelectable(TechnoClass* pTechno);
 
 	// Called from the per-frame AI hook: keep a member near its anchor. No-op
 	// for anything that is not a following squad member, so units that never

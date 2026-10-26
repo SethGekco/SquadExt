@@ -100,6 +100,16 @@ bool __fastcall TechnoClass_Select_Wrapper_SquadExt(TechnoClass* pThis)
 	if (!pThis)
 		return false;
 
+	// Selectable=no: never enters a selection, by any route. Checked FIRST, so
+	// it also wins over MemberSelection=anchor -- "cannot be selected" is
+	// easier to reason about than "cannot be selected unless it redirects".
+	//
+	// This is what keeps an anchor's own action cursor intact: YR resolves the
+	// cursor across the whole selection, so a single GI in the box turns a
+	// CHRONO MINER's ore-harvest cursor into a plain move cursor.
+	if (!TechnoExt::IsSquadSelectable(pThis))
+		return false;
+
 	// anchor: redirect the click to the squad's anchor. Routed through the full
 	// virtual call so any other DLL's wrapper still gets to see the anchor.
 	if (auto const pTarget = TechnoExt::ResolveSelectionTarget(pThis))
@@ -116,8 +126,16 @@ bool __fastcall TechnoClass_Select_Wrapper_SquadExt(TechnoClass* pThis)
 
 	bool const result = CallPrev(pThis);
 
+	// Non-selectable mates are filtered HERE rather than inside
+	// CollectSelectionGroup: that helper answers "who is in this squad", which
+	// stays true regardless of who may be clicked. Without this filter group
+	// expansion would select a Selectable=no member anyway, since mates go
+	// through CallPrev and so bypass the refusal above.
 	for (auto const pMate : group)
-		CallPrev(pMate);
+	{
+		if (TechnoExt::IsSquadSelectable(pMate))
+			CallPrev(pMate);
+	}
 
 	return result;
 }

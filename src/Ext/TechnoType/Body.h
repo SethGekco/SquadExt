@@ -71,6 +71,25 @@ struct SquadEntryData
 	Valueable<bool> Follow;          // members trail a moving anchor
 	Valueable<int> FollowRange;      // cells of slack before a member is recalled
 	Valueable<int> FollowDelay;      // frames between follow re-orders (anti-spam)
+	// Can a member be put into a selection at all? no = clicks and band-select
+	// skip it entirely, which also makes it unorderable by the player: there is
+	// no way to issue an order to a unit you cannot select.
+	//
+	// The reason this exists: YR resolves the action cursor across the WHOLE
+	// selection, so one GI in the box downgrades a CHRONO MINER's ore-harvest
+	// cursor to a plain move cursor. Keeping members out of the selection
+	// leaves the anchor's own cursor intact.
+	Valueable<bool> Selectable;
+	// May AI team recruitment take this member? no = it is released again on
+	// its next tick.
+	//
+	// The reason this exists: a PRISM TOWER with a timer entry became an
+	// infinite GI fountain -- the AI recruited each guard into an attack wave,
+	// the guard died at the enemy base, the live count dropped, and the timer
+	// refilled it. 5499 spawns in one session, MaxActive working perfectly the
+	// whole time, because the cap bounds how many are ALIVE and not how many
+	// the AI may march off and lose.
+	Valueable<bool> Recruitable;
 
 	// -- when this entry fires (bitmask of SquadSpawnEventFlags) --
 	int SpawnEvents;
@@ -119,6 +138,8 @@ struct SquadEntryData
 		, Follow { true }
 		, FollowRange { 4 }
 		, FollowDelay { 15 }
+		, Selectable { true }
+		, Recruitable { true }
 		, OrderEcho { SquadOrderEcho::None }
 		, OrderEchoDelay { 30 }
 		, OrderEchoMinChange { 3 }

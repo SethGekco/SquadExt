@@ -1,6 +1,7 @@
 #include "Body.h"
 
 #include <FootClass.h>
+#include <TeamClass.h>
 #include <BuildingTypeClass.h>
 #include <HouseClass.h>
 #include <MapClass.h>
@@ -295,6 +296,8 @@ static bool SpawnOneMember(TechnoClass* pAnchor, TechnoExt::ExtData* pExt,
 		pMemberExt->AnchorDeathHeir = pEntry->AnchorDeathHeir.isset()
 			? pEntry->AnchorDeathHeir.Get() : nullptr;
 		pMemberExt->AnchorDeathTimer = -1;
+		pMemberExt->SquadSelectable = pEntry->Selectable;
+		pMemberExt->SquadRecruitable = pEntry->Recruitable;
 	}
 
 	if (linkToAnchor && pExt)
@@ -747,6 +750,58 @@ void TechnoExt::ProcessOrderEcho(TechnoClass* pAnchor)
 // Anything more (formation shapes, follow offsets, order inheritance) is the
 // Peer/Retinue behaviour work and is deliberately NOT attempted here.
 // ============================================================================
+
+bool TechnoExt::IsSquadSelectable(TechnoClass* pTechno)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pTechno);
+
+	// Unknown to us, or an ordinary unit: selectable. SquadSelectable defaults
+	// true, so this is one bool test for everything in the game.
+	return !pExt || pExt->SquadSelectable;
+}
+
+// Release a member the AI has conscripted into a team.
+//
+// This is deliberately REACTIVE rather than a bail-out hook on
+// TeamClass::AddMember (0x6EA500). Refusing there means returning false from
+// the middle of a function whose prologue has already been displaced -- the
+// sibling YRAggressiveStance documents that address as needing 7 stolen bytes
+// because 6 cuts a `mov` in half -- so a bail-out would have to synthesise the
+// epilogue and stack cleanup for a thiscall with two stack args. Letting the
+// recruitment happen and undoing it one frame later needs no new hook at all,
+// runs in a tick we already own, and cannot corrupt the engine's stack.
+//
+// The cost is that a member belongs to the team for up to one frame. If the AI
+// re-recruits it immediately we simply release it again; the net effect is that
+// the member stays home, which is the point.
+void TechnoExt::ProcessSquadConscription(TechnoClass* pMember)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pMember);
+
+	// Fast path for every unit that is not an opted-in squad member.
+	if (!pExt || pExt->SquadRecruitable || !pExt->IsSquadMember)
+		return;
+
+	auto const pFoot = abstract_cast<FootClass*>(pMember);
+	if (!pFoot)
+		return; // buildings are not recruited
+
+	auto const pTeam = pFoot->Team;
+	if (!pTeam)
+		return;
+
+	// Non-virtual JMP_THIS, so a qualified call reaches the real function --
+	// unlike Select/Unlimbo/QueueMission, which are R0/RX stubs in YRpp.
+	pTeam->LiberateMember(pFoot);
+
+	if (!pExt->ConscriptionLogged)
+	{
+		pExt->ConscriptionLogged = true;
+		Debug::Log("[SquadExt] %s(%p): released from an AI team (Recruitable=no). "
+			"Further releases for this member are silent.\n",
+			pMember->GetTechnoType()->ID, pMember);
+	}
+}
 
 void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 {
@@ -1426,6 +1481,9 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->EchoDelay)
 		.Process(this->EchoMinChange)
 		.Process(this->EchoTimer)
+		.Process(this->SquadSelectable)
+		.Process(this->SquadRecruitable)
+		.Process(this->ConscriptionLogged)
 		;
 }
 

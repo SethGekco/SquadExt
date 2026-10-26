@@ -67,6 +67,9 @@ DEFINE_HOOK(0x4DA8A0, FootClass_Update_SquadExt, 0x6)
 	TechnoExt::ProcessSquadRegen(pThis);
 	TechnoExt::ProcessOrderEcho(pThis);
 	TechnoExt::ProcessAnchorDeath(pThis);
+	// Before Follow: a member released from a team this frame should be walking
+	// back to its anchor on the same frame, not one frame behind the AI.
+	TechnoExt::ProcessSquadConscription(pThis);
 	TechnoExt::ProcessSquadFollow(pThis);
 
 	return 0;
