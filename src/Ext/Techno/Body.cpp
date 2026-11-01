@@ -16,6 +16,7 @@
 #include <unordered_set>
 
 #include <Ext/TechnoType/Body.h>
+#include <SquadTeams.h>
 
 TechnoExt::ExtContainer TechnoExt::ExtMap;
 
@@ -107,6 +108,23 @@ namespace
 
 	// Give the member a standing order so a squad with no follow behaviour still
 	// does something instead of standing inert.
+	// Which SquadN entry is this? Derived from the pointer, because both spawn
+	// paths iterate entries without an index and threading one through would
+	// touch two separate call chains. Validated against the vector it must point
+	// into, so a pointer from anywhere else yields -1 rather than a wild index.
+	int EntryIndexOf(TechnoTypeExt::ExtData const* pTypeExt, SquadEntryData const* pEntry)
+	{
+		if (!pTypeExt || !pEntry || pTypeExt->SquadData.empty())
+			return -1;
+
+		auto const pFirst = &pTypeExt->SquadData[0];
+		if (pEntry < pFirst)
+			return -1;
+
+		auto const idx = pEntry - pFirst;
+		return idx < (ptrdiff_t)pTypeExt->SquadData.size() ? (int)idx : -1;
+	}
+
 	// Stance is the short convenience form of Mission=. One mapping, used both
 	// when the member spawns and whenever its held mission has to be restored.
 	// -1 means "leave the engine default untouched", which is what Stance=none
@@ -316,6 +334,20 @@ static bool SpawnOneMember(TechnoClass* pAnchor, TechnoExt::ExtData* pExt,
 		pMemberExt->SquadOrderRange = pEntry->OrderRange;
 		pMemberExt->MemberMission = heldMission;
 		pMemberExt->MemberMissionHold = pEntry->MissionHold;
+	}
+
+	// Join the entry's team. Only for LINKED members: a deathsquad has no
+	// surviving anchor to own a team, and one owned by the unit being destroyed
+	// would be retired in the same breath. Deathsquads use Mission=/MissionHold=
+	// instead.
+	if (linkToAnchor)
+	{
+		if (auto const pAnchorTypeExt = TechnoTypeExt::ExtMap.Find(pAnchor->GetTechnoType()))
+		{
+			int const entryIndex = EntryIndexOf(pAnchorTypeExt, pEntry);
+			if (entryIndex >= 0)
+				SquadTeams_JoinForEntry(pAnchor, pMember, pEntry, entryIndex);
+		}
 	}
 
 	if (linkToAnchor && pExt)
@@ -818,6 +850,13 @@ void TechnoExt::ProcessSquadConscription(TechnoClass* pMember)
 	if (!pTeam)
 		return;
 
+	// Never release a member from the team WE gave it. Recruitable=no means
+	// "the AI may not conscript this member", not "this member may not be in
+	// the team its own squad put it in" -- without this the two features would
+	// cancel each other out and a Script= squad would never run its script.
+	if (pExt->SquadTeam == pTeam)
+		return;
+
 	// Non-virtual JMP_THIS, so a qualified call reaches the real function --
 	// unlike Select/Unlimbo/QueueMission, which are R0/RX stubs in YRpp.
 	pTeam->LiberateMember(pFoot);
@@ -1190,6 +1229,10 @@ void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
 	// The `produced` trigger is one-shot per unit: Unlimbo fires again on
 	// undeploy / transport exit / chrono-warp.
 	pExt->SquadsSpawned = true;
+
+	// The unit-level team first: it is independent of any roster, and a unit may
+	// carry one with no SquadN entries at all.
+	SquadTeams_AttachUnitTeam(pAnchor);
 
 	TechnoExt::SpawnEntriesForEvent(pAnchor, SquadEvent_Produced, true);
 
@@ -1643,6 +1686,21 @@ void TechnoExt::ExtData::InvalidatePointer(void* ptr, bool bRemoved)
 		else
 			++it;
 	}
+
+	// Team pointers. Nulled rather than erased: the vector is indexed BY ENTRY
+	// NUMBER, so removing a slot would renumber every entry after it and the
+	// next member of Squad1 would join Squad2's team.
+	if (this->UnitTeam == ptr)
+		this->UnitTeam = nullptr;
+
+	if (this->SquadTeam == ptr)
+		this->SquadTeam = nullptr;
+
+	for (auto& pTeam : this->SquadTeams)
+	{
+		if (pTeam == ptr)
+			pTeam = nullptr;
+	}
 }
 
 // ============================================================================
@@ -1689,6 +1747,9 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->MemberMission)
 		.Process(this->MemberMissionHold)
 		.Process(this->MissionHoldLogged)
+		.Process(this->SquadTeams)
+		.Process(this->UnitTeam)
+		.Process(this->SquadTeam)
 		.Process(this->OrderCancelLogged)
 		;
 }

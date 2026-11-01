@@ -297,6 +297,19 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 	this->MaxSpawnPerProduction.Read(exINI, pSection, "Squad.MaxSpawnPerProduction");
 	this->MaxActive.Read(exINI, pSection, "Squad.MaxActive");
 
+	// Unit-level team attachment, independent of any squad entry. Same lazy
+	// resolution: aimd.ini has not loaded yet.
+	{
+		char idBuf[0x18] = { 0 };
+
+		if (pINI->ReadString(pSection, "Squad.Team", "", idBuf, sizeof(idBuf)) > 0)
+			this->SquadTeamID = idBuf;
+
+		if (pINI->ReadString(pSection, "Squad.Script", "", idBuf, sizeof(idBuf)) > 0)
+			this->SquadScriptID = idBuf;
+	}
+	this->SquadTeamRecruits.Read(exINI, pSection, "Squad.TeamRecruits");
+
 	// Iterate size + 1 so vector contents can be overridden via scenario rules.
 	for (size_t i = 0; i <= this->SquadData.size(); ++i)
 	{
@@ -413,6 +426,38 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 
 		_snprintf_s(key, sizeof(key), "Squad%d.MissionHold", idx);
 		entry.MissionHold.Read(exINI, pSection, key);
+
+		// Team / Script are stored as IDs, deliberately unresolved. aimd.ini is
+		// read AFTER rulesmd.ini, so TeamTypeClass::Find and
+		// ScriptTypeClass::Find cannot succeed yet; they are resolved the first
+		// time the squad actually needs a team.
+		char idBuf[0x18] = { 0 };
+
+		_snprintf_s(key, sizeof(key), "Squad%d.Team", idx);
+		if (pINI->ReadString(pSection, key, "", idBuf, sizeof(idBuf)) > 0)
+			entry.TeamID = idBuf;
+
+		_snprintf_s(key, sizeof(key), "Squad%d.Script", idx);
+		if (pINI->ReadString(pSection, key, "", idBuf, sizeof(idBuf)) > 0)
+			entry.ScriptID = idBuf;
+
+		_snprintf_s(key, sizeof(key), "Squad%d.TeamRecruits", idx);
+		entry.TeamRecruits.Read(exINI, pSection, key);
+
+		if (!entry.TeamID.empty() && !entry.ScriptID.empty())
+		{
+			Debug::Log("[SquadExt] [%s]Squad%d: both Team= and Script= given; "
+				"Team wins (a script IS a sequence of missions, so letting both "
+				"apply would just fight).\n", pSection, idx);
+		}
+
+		if (!entry.TeamID.empty() && entry.TeamRecruits.Get())
+		{
+			Debug::Log("[SquadExt] [%s]Squad%d: TeamRecruits is ignored with a "
+				"named Team= -- that TeamType is shared with every other user "
+				"in aimd.ini and must not be mutated. Set Recruiter= on the "
+				"team itself instead.\n", pSection, idx);
+		}
 
 		// Mission is read as a NAME and resolved by the engine's own Mission
 		// Control lookup. Hand-rolling a name->enum table would drift from the
@@ -605,6 +650,9 @@ bool SquadEntryData::Serialize(T& stm)
 		.Process(this->OrderRange)
 		.Process(this->Mission)
 		.Process(this->MissionHold)
+		.Process(this->TeamID)
+		.Process(this->ScriptID)
+		.Process(this->TeamRecruits)
 		.Process(this->OrderEcho)
 		.Process(this->OrderEchoDelay)
 		.Process(this->OrderEchoMinChange)
@@ -612,6 +660,9 @@ bool SquadEntryData::Serialize(T& stm)
 		.Process(this->RegenDelay)
 		.Process(this->RegenRequiresEligible)
 		.Process(this->MaxActive)
+		.Process(this->SquadTeamID)
+		.Process(this->SquadScriptID)
+		.Process(this->SquadTeamRecruits)
 		.Process(this->SpawnEvents)
 		.Process(this->SpawnEventInterval)
 		.Process(this->SpawnEventChance)

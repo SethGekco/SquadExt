@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include <vector>
 
 #include <Utilities/Container.h>
@@ -112,6 +114,29 @@ struct SquadEntryData
 	// between a squad and a spawner.
 	Valueable<bool> MissionHold;
 
+	// -- AI team / script attachment --
+	//
+	// ONE team per squad entry, not per member: a team is a formation, and a
+	// team per member would mean an unbounded number of one-unit teams for an
+	// entry that spawns on a timer.
+	//
+	// Stored as IDs and resolved LAZILY, because TeamTypes and ScriptTypes come
+	// from aimd.ini, which the engine reads AFTER rulesmd.ini -- at parse time
+	// neither lookup can succeed yet.
+	//
+	// Team= uses the modder's own TeamType, with its own TaskForce and its own
+	// Recruiter= setting, so recruiting behaviour stays entirely in aimd.ini.
+	// Script= synthesises a TeamType whose TaskForce is built from THIS entry's
+	// roster, which is what keeps it at full strength and therefore quiet.
+	std::string TeamID;
+	std::string ScriptID;
+	// Synthesised teams only: may the team pull in units that are not ours? no
+	// keeps it to the squad; yes lets it replace losses from the owner's army,
+	// which is the "building that interacts with the player's army" case.
+	// Ignored for a named Team=, whose TeamType we must not mutate -- it is
+	// shared with every other user of that team in aimd.ini.
+	Valueable<bool> TeamRecruits;
+
 	// -- when this entry fires (bitmask of SquadSpawnEventFlags) --
 	int SpawnEvents;
 	Valueable<int> SpawnEventInterval; // frames, for the timer trigger
@@ -164,6 +189,9 @@ struct SquadEntryData
 		, Orderable { true }
 		, OrderRange { 0 }
 		, MissionHold { false }
+		, TeamID {}
+		, ScriptID {}
+		, TeamRecruits { false }
 		, OrderEcho { SquadOrderEcho::None }
 		, OrderEchoDelay { 30 }
 		, OrderEchoMinChange { 3 }
@@ -237,12 +265,26 @@ public:
 		// no cap of their own, which is the gap it exists to close. 0 = none.
 		Valueable<int> MaxActive;
 
+		// Unit-level team attachment, independent of any squad.
+		//
+		// This is what lets a unit or building carry a team WITHOUT spawning
+		// anything: the team is created when the unit appears and, if its
+		// TaskForce asks for units, recruits them from the owner's existing
+		// army. A building has no FootClass to add, so for a building the team
+		// starts empty and recruiting is the entire point.
+		std::string SquadTeamID;
+		std::string SquadScriptID;
+		Valueable<bool> SquadTeamRecruits;
+
 		ExtData(TechnoTypeClass* OwnerObject) : Extension<TechnoTypeClass>(OwnerObject)
 			, SquadData {}
 			, EntrySelect { SquadEntrySelect::First }
 			, LoopLimit { 0 }
 			, MaxSpawnPerProduction { 999 }
 			, MaxActive { 0 }
+			, SquadTeamID {}
+			, SquadScriptID {}
+			, SquadTeamRecruits { false }
 		{ }
 
 		virtual ~ExtData() = default;
@@ -254,7 +296,16 @@ public:
 		virtual void LoadFromStream(PhobosStreamReader& Stm) override;
 		virtual void SaveToStream(PhobosStreamWriter& Stm) override;
 
-		bool HasSquads() const { return !this->SquadData.empty(); }
+		// True when this type needs the per-frame squad machinery at all. A
+		// unit-level team counts: a building can carry Squad.Team= with no
+		// roster whatsoever, and without this it would never be flagged and the
+		// team would never be created.
+		bool HasSquads() const
+		{
+			return !this->SquadData.empty()
+				|| !this->SquadTeamID.empty()
+				|| !this->SquadScriptID.empty();
+		}
 
 	private:
 		template <typename T>

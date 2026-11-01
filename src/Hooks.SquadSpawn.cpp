@@ -15,6 +15,7 @@
 #include <Utilities/Macro.h>
 
 #include <Ext/Techno/Body.h>
+#include <SquadTeams.h>
 #include <Ext/TechnoType/Body.h>
 
 // ============================================================================
@@ -104,6 +105,12 @@ DEFINE_HOOK(0x702050, TechnoClass_ReceiveDamage_AnchorDeath_SquadExt, 0x6)
 	// mistaken for members of the squad that is being dissolved.
 	TechnoExt::SpawnDeathSquad(pThis);
 	TechnoExt::ArmAnchorDeath(pThis);
+	// Retire AFTER the deathsquad has spawned, so a deathsquad is not denied by
+	// a team teardown, and here rather than inside ArmAnchorDeath, which returns
+	// early for an anchor with no members -- a unit-level team has none. A team
+	// left running would go recruiting replacements for a formation that no
+	// longer exists.
+	SquadTeams_RetireAllFor(pThis);
 
 	return 0;
 }

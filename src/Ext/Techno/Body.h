@@ -10,6 +10,8 @@
 
 #include <SquadEnums.h>
 
+class TeamClass;
+
 // Per-instance squad state.
 //
 // NOTE ON DESIGN: PR #1663 kept squads in a separate global `SquadManager`
@@ -39,6 +41,21 @@ public:
 		TechnoClass* SquadAnchor;
 		// If this unit is an anchor, the members it brought.
 		std::vector<TechnoClass*> SquadMembers;
+
+		// AI team attachment. Team pointers here are NEVER dereferenced without
+		// going through SquadTeams_Live first: a TeamClass can be destroyed by
+		// the engine at any time and its allocation reused, and unlike our
+		// anchor/member links these are not guaranteed to be scrubbed in time.
+		//
+		// One team per ENTRY, indexed by entry number, so Squad0 and Squad1 do
+		// not share a formation.
+		std::vector<TeamClass*> SquadTeams;
+		// The unit-level team from Squad.Team= / Squad.Script=, which exists
+		// whether or not this unit spawns anything.
+		TeamClass* UnitTeam;
+		// If this unit is a member, the team WE put it in. Checked so that
+		// Recruitable=no does not release a member from the squad's own team.
+		TeamClass* SquadTeam;
 
 		// True when this unit was spawned AS a member (drives ActivateAs).
 		bool IsSquadMember;
@@ -150,6 +167,9 @@ public:
 		ExtData(TechnoClass* OwnerObject) : Extension<TechnoClass>(OwnerObject)
 			, SquadAnchor { nullptr }
 			, SquadMembers {}
+			, SquadTeams {}
+			, UnitTeam { nullptr }
+			, SquadTeam { nullptr }
 			, IsSquadMember { false }
 			, SquadsSpawned { false }
 			, PendingSquadSpawn { false }
@@ -225,6 +245,7 @@ public:
 			case AbstractType::Infantry:
 			case AbstractType::Building:
 			case AbstractType::Aircraft:
+			case AbstractType::Team:
 				return false; // we hold raw pointers to these
 			default:
 				return true;
