@@ -107,23 +107,31 @@ namespace
 
 	// Give the member a standing order so a squad with no follow behaviour still
 	// does something instead of standing inert.
-	void ApplyStance(TechnoClass* pMember, SquadStance stance)
+	// Stance is the short convenience form of Mission=. One mapping, used both
+	// when the member spawns and whenever its held mission has to be restored.
+	// -1 means "leave the engine default untouched", which is what Stance=none
+	// has always meant.
+	int MissionForStance(SquadStance stance)
 	{
-		Mission mission;
 		switch (stance)
 		{
-		case SquadStance::Guard:     mission = Mission::Guard;      break;
-		case SquadStance::AreaGuard: mission = Mission::Area_Guard; break;
-		case SquadStance::Sticky:    mission = Mission::Sticky;     break;
-		case SquadStance::Hunt:      mission = Mission::Hunt;       break;
+		case SquadStance::Guard:     return static_cast<int>(Mission::Guard);
+		case SquadStance::AreaGuard: return static_cast<int>(Mission::Area_Guard);
+		case SquadStance::Sticky:    return static_cast<int>(Mission::Sticky);
+		case SquadStance::Hunt:      return static_cast<int>(Mission::Hunt);
 		case SquadStance::None:
-		default:
-			return; // leave the engine default untouched
+		default:                     return -1;
 		}
+	}
 
-		// Virtual calls -- QueueMission is an R0 stub in YRpp, so a qualified
+	void ApplyMission(TechnoClass* pMember, int mission)
+	{
+		if (mission < 0)
+			return;
+
+		// Virtual call -- QueueMission is an R0 stub in YRpp, so a qualified
 		// call would silently no-op (same footgun as Select / Unlimbo).
-		pMember->QueueMission(mission, false);
+		pMember->QueueMission(static_cast<Mission>(mission), false);
 	}
 
 	const char* SpawnEventName(int flag)
@@ -284,7 +292,13 @@ static bool SpawnOneMember(TechnoClass* pAnchor, TechnoExt::ExtData* pExt,
 
 	ApplyVeterancy(pMember, pAnchor, pEntry->GetSlotVeterancy(k));
 	ApplyHealth(pMember, pEntry->GetSlotHealth(k));
-	ApplyStance(pMember, pEntry->Stance);
+	// Mission= wins over Stance= when both are given: it is the modder naming
+	// the exact mission, which beats the five-value shorthand.
+	int const heldMission = pEntry->Mission >= 0
+		? pEntry->Mission
+		: MissionForStance(pEntry->Stance);
+
+	ApplyMission(pMember, heldMission);
 
 	if (auto const pMemberExt = TechnoExt::ExtMap.Find(pMember))
 	{
@@ -300,7 +314,8 @@ static bool SpawnOneMember(TechnoClass* pAnchor, TechnoExt::ExtData* pExt,
 		pMemberExt->SquadRecruitable = pEntry->Recruitable;
 		pMemberExt->SquadOrderable = pEntry->Orderable;
 		pMemberExt->SquadOrderRange = pEntry->OrderRange;
-		pMemberExt->MemberStance = pEntry->Stance;
+		pMemberExt->MemberMission = heldMission;
+		pMemberExt->MemberMissionHold = pEntry->MissionHold;
 	}
 
 	if (linkToAnchor && pExt)
@@ -880,7 +895,7 @@ void TechnoExt::ProcessSquadOrders(TechnoClass* pMember)
 
 	// Fast path: one bool and one int test for every unit that opted into
 	// neither feature, which is every unit in the game by default.
-	if (pExt->SquadOrderable && pExt->SquadOrderRange <= 0)
+	if (pExt->SquadOrderable && pExt->SquadOrderRange <= 0 && !pExt->MemberMissionHold)
 		return;
 
 	if (!pExt->IsSquadMember)
@@ -916,47 +931,84 @@ void TechnoExt::ProcessSquadOrders(TechnoClass* pMember)
 		return;
 	}
 
-	if (pExt->SquadOrderable)
+	Mission const cur = pFoot->CurrentMission;
+
+	if (!pExt->SquadOrderable)
+	{
+		// Orderable=no: revert movement orders to the member's held mission.
+		//
+		// Only MOVEMENT missions are cancelled. Mission::Attack is deliberately
+		// left alone because a player-issued attack and the engine's own
+		// retaliation are the same mission -- cancelling it would leave a guard
+		// unable to shoot back, a worse bug than the one being fixed.
+		switch (cur)
+		{
+		case Mission::Move:
+		case Mission::QMove:
+		case Mission::Enter:
+		case Mission::Capture:
+		case Mission::Patrol:
+		case Mission::AttackMove:
+			// ApplyMission no-ops for "no held mission" on purpose (Stance=none
+			// means leave the engine default alone at spawn). Refusing an order
+			// still has to cancel it, so fall back to a plain stop rather than
+			// silently doing nothing.
+			if (pExt->MemberMission < 0)
+				pMember->QueueMission(Mission::Stop, false);
+			else
+				ApplyMission(pMember, pExt->MemberMission);
+
+			if (!pExt->OrderCancelLogged)
+			{
+				pExt->OrderCancelLogged = true;
+				Debug::Log("[SquadExt] %s(%p): refused an outside order "
+					"(Orderable=no), reverted to mission %d. Further refusals "
+					"for this member are silent.\n",
+					pMember->GetTechnoType()->ID, pMember, pExt->MemberMission);
+			}
+			return;
+
+		default:
+			break;
+		}
+	}
+
+	// MissionHold: put the member back on its mission once it has lapsed into
+	// idling. This is what separates a squad member from a spawner minion -- a
+	// Mission=hunt member that runs out of targets drops to Guard and, without
+	// this, never hunts again.
+	//
+	// Only IDLE missions are overridden, never a mission the member is actively
+	// executing: re-asserting Hunt over the Attack that Hunt itself produced
+	// would cancel the attack every tick and the member would never fire.
+	if (!pExt->MemberMissionHold || pExt->MemberMission < 0)
 		return;
 
-	// Orderable=no: revert movement orders to the member's stance.
-	//
-	// Only MOVEMENT missions are cancelled. Mission::Attack is deliberately left
-	// alone because a player-issued attack and the engine's own retaliation are
-	// the same mission -- cancelling it would leave a guard unable to shoot back,
-	// which is a worse bug than the one being fixed.
-	switch (pFoot->CurrentMission)
+	if (static_cast<int>(cur) == pExt->MemberMission)
+		return; // already holding it
+
+	switch (cur)
 	{
-	case Mission::Move:
-	case Mission::QMove:
-	case Mission::Enter:
-	case Mission::Capture:
-	case Mission::Patrol:
-	case Mission::AttackMove:
+	case Mission::Guard:
+	case Mission::Area_Guard:
+	case Mission::Sleep:
+	case Mission::None:
+	case Mission::Stop:
 		break;
 	default:
-		return;
+		return; // busy: moving, attacking, entering, harvesting...
 	}
 
-	if (pExt->MemberStance == SquadStance::None)
-	{
-		// ApplyStance no-ops for `none` on purpose (it means "leave the engine
-		// default alone" at spawn). Refusing an order still has to cancel it,
-		// so fall back to a plain stop rather than silently doing nothing.
-		pMember->QueueMission(Mission::Stop, false);
-	}
-	else
-	{
-		ApplyStance(pMember, pExt->MemberStance);
-	}
+	ApplyMission(pMember, pExt->MemberMission);
 
-	if (!pExt->OrderCancelLogged)
+	if (!pExt->MissionHoldLogged)
 	{
-		pExt->OrderCancelLogged = true;
-		Debug::Log("[SquadExt] %s(%p): refused an outside order (Orderable=no), "
-			"reverted to stance %d. Further refusals for this member are silent.\n",
+		pExt->MissionHoldLogged = true;
+		Debug::Log("[SquadExt] %s(%p): lapsed to mission %d, re-asserting held "
+			"mission %d (MissionHold). Further re-asserts for this member are "
+			"silent.\n",
 			pMember->GetTechnoType()->ID, pMember,
-			static_cast<int>(pExt->MemberStance));
+			static_cast<int>(cur), pExt->MemberMission);
 	}
 }
 
@@ -1078,6 +1130,22 @@ void TechnoExt::ProcessSquadFollow(TechnoClass* pMember)
 	}
 
 	if (!mayOrder)
+		return;
+
+	// MissionHold outranks Follow.
+	//
+	// Follow defaults to yes, so without this a Mission=hunt member oscillates:
+	// it hunts outward, Follow drags it back for being far away, it idles,
+	// MissionHold sends it hunting again. The member was explicitly told to
+	// hold a mission, so holding it wins. OrderRange is the tag for bounding a
+	// holding member, and it still applies -- it is enforced in
+	// ProcessSquadOrders, which runs just before this.
+	//
+	// Placed AFTER the mission switch above on purpose: that switch is what
+	// clears FollowOrderActive when the member goes idle, and returning before
+	// it would leave the flag stuck set, which would in turn make
+	// ProcessSquadOrders bail out forever and kill both OrderRange and the hold.
+	if (pExt->MemberMissionHold && pExt->MemberMission >= 0)
 		return;
 
 	if (pMember->DistanceFrom(pAnchor) <= rangeCells * 256)
@@ -1618,7 +1686,9 @@ void TechnoExt::ExtData::Serialize(T& Stm)
 		.Process(this->ConscriptionLogged)
 		.Process(this->SquadOrderable)
 		.Process(this->SquadOrderRange)
-		.Process(this->MemberStance)
+		.Process(this->MemberMission)
+		.Process(this->MemberMissionHold)
+		.Process(this->MissionHoldLogged)
 		.Process(this->OrderCancelLogged)
 		;
 }

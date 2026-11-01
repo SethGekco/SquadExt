@@ -1,5 +1,7 @@
 #include "Body.h"
 
+#include <MissionClass.h>
+
 #include <BuildingTypeClass.h>
 #include <HouseTypeClass.h>
 #include <HouseClass.h>
@@ -409,6 +411,29 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 		_snprintf_s(key, sizeof(key), "Squad%d.OrderRange", idx);
 		entry.OrderRange.Read(exINI, pSection, key);
 
+		_snprintf_s(key, sizeof(key), "Squad%d.MissionHold", idx);
+		entry.MissionHold.Read(exINI, pSection, key);
+
+		// Mission is read as a NAME and resolved by the engine's own Mission
+		// Control lookup. Hand-rolling a name->enum table would drift from the
+		// engine the first time anyone edited Mission Control, and would also
+		// silently exclude the missions we had not thought of.
+		_snprintf_s(key, sizeof(key), "Squad%d.Mission", idx);
+		char missionName[64] = { 0 };
+		if (pINI->ReadString(pSection, key, "", missionName, sizeof(missionName)) > 0)
+		{
+			auto const mission = MissionControlClass::FindIndex(missionName);
+			if (mission == Mission::None)
+			{
+				Debug::INIParseFailed(pSection, key, missionName,
+					"not a known mission (see Mission Control in rules)");
+			}
+			else
+			{
+				entry.Mission = static_cast<int>(mission);
+			}
+		}
+
 		_snprintf_s(key, sizeof(key), "Squad%d.OrderEcho", idx);
 		entry.OrderEcho.Read(exINI, pSection, key);
 
@@ -578,6 +603,8 @@ bool SquadEntryData::Serialize(T& stm)
 		.Process(this->Recruitable)
 		.Process(this->Orderable)
 		.Process(this->OrderRange)
+		.Process(this->Mission)
+		.Process(this->MissionHold)
 		.Process(this->OrderEcho)
 		.Process(this->OrderEchoDelay)
 		.Process(this->OrderEchoMinChange)

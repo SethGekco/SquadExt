@@ -99,6 +99,18 @@ struct SquadEntryData
 	// walked back, enforced continuously rather than only once it goes idle --
 	// so the player may order it about, but only inside this radius.
 	Valueable<int> OrderRange;
+	// Any engine mission, BY NAME, resolved through MissionControlClass so the
+	// set of legal values is whatever Mission Control actually defines -- and
+	// stays correct if a mod redefines the table. -1 = unset, in which case
+	// Stance decides. Stance stays as the short convenience form; this is the
+	// general one, and it is what makes a spawned member able to hold any
+	// mission the engine has rather than the five Stance exposes.
+	int Mission { -1 };
+	// Re-assert that mission whenever the member lapses back to idling. Without
+	// it a mission is a one-shot nudge at spawn: a hunter that runs out of
+	// targets reverts to Guard and never resumes, which is the difference
+	// between a squad and a spawner.
+	Valueable<bool> MissionHold;
 
 	// -- when this entry fires (bitmask of SquadSpawnEventFlags) --
 	int SpawnEvents;
@@ -151,6 +163,7 @@ struct SquadEntryData
 		, Recruitable { true }
 		, Orderable { true }
 		, OrderRange { 0 }
+		, MissionHold { false }
 		, OrderEcho { SquadOrderEcho::None }
 		, OrderEchoDelay { 30 }
 		, OrderEchoMinChange { 3 }

@@ -85,10 +85,17 @@ public:
 		// int test for every unit in the game.
 		bool SquadOrderable;
 		int SquadOrderRange;
-		// The stance the spawning entry gave this member, kept so an order we
-		// refuse can be reverted to it. Applied once at spawn was not enough
-		// once refusing orders became a feature.
-		SquadStance MemberStance;
+		// The engine mission this member is supposed to be holding, resolved at
+		// spawn from Mission= if given and otherwise from Stance=. -1 = none,
+		// meaning the engine default was deliberately left alone.
+		//
+		// Kept (rather than applied once at spawn) because two features need to
+		// restore it later: reverting an order we refuse, and MissionHold.
+		int MemberMission;
+		// Re-assert MemberMission whenever the member lapses back to idling.
+		bool MemberMissionHold;
+		// One-shot log guard, same reasoning as the two below.
+		bool MissionHoldLogged;
 		// One-shot, same reasoning as ConscriptionLogged below.
 		bool OrderCancelLogged;
 
@@ -160,7 +167,9 @@ public:
 			, ConscriptionLogged { false }
 			, SquadOrderable { true }
 			, SquadOrderRange { 0 }
-			, MemberStance { SquadStance::Guard }
+			, MemberMission { -1 }
+			, MemberMissionHold { false }
+			, MissionHoldLogged { false }
 			, OrderCancelLogged { false }
 			, AnchorDeathBehavior { SquadAnchorDeath::Disband }
 			, AnchorDeathTimer { -1 }
