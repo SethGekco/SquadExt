@@ -71,7 +71,14 @@ namespace
 			if (!pType)
 				continue;
 
-			int const count = pEntry->GetSlotCount(k) > 0 ? pEntry->GetSlotCount(k) : 1;
+			// TeamNumbers overrides Numbers for the TaskForce only -- what the
+			// team ASKS FOR, as opposed to what the squad actually fields. Short
+			// lists fall back per slot rather than wholesale, so
+			// TeamNumbers=4 against Members=GGI,E1 raises only the GGI demand.
+			int count = pEntry->GetSlotCount(k) > 0 ? pEntry->GetSlotCount(k) : 1;
+
+			if (k < pEntry->TeamNumbers.size() && pEntry->TeamNumbers[k] > 0)
+				count = pEntry->TeamNumbers[k];
 
 			// Fold duplicate types together rather than spending two of the six
 			// slots on the same thing.
@@ -261,10 +268,21 @@ TeamClass* SquadTeams_JoinForEntry(TechnoClass* pAnchor, TechnoClass* pMember,
 
 		slots[entryIndex] = pTeam;
 
+		// The TaskForce demand is in the line on purpose: whether a team
+		// recruits is decided entirely by demand-versus-members, so a line that
+		// said only "recruiter=yes" could not distinguish "will recruit now"
+		// from "will recruit once someone dies".
+		int demand = 0;
+		if (auto const pTF = pType->TaskForce)
+		{
+			for (int i = 0; i < pTF->CountEntries && i < 6; ++i)
+				demand += pTF->Entries[i].Amount;
+		}
+
 		Debug::Log("[SquadExt] %s(%p): created team '%s' for Squad%d "
-			"(recruiter=%s).\n",
+			"(recruiter=%s, TaskForce asks for %d unit(s)).\n",
 			pAnchor->GetTechnoType()->ID, pAnchor, pType->ID, entryIndex,
-			pType->Recruiter ? "yes" : "no");
+			pType->Recruiter ? "yes" : "no", demand);
 	}
 
 	// bForce=true: we are placing a member we just created into the team we just

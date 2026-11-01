@@ -444,6 +444,9 @@ void TechnoTypeExt::ExtData::LoadFromINIFile(CCINIClass* const pINI)
 		_snprintf_s(key, sizeof(key), "Squad%d.TeamRecruits", idx);
 		entry.TeamRecruits.Read(exINI, pSection, key);
 
+		_snprintf_s(key, sizeof(key), "Squad%d.TeamNumbers", idx);
+		entry.TeamNumbers.Read(exINI, pSection, key);
+
 		if (!entry.TeamID.empty() && !entry.ScriptID.empty())
 		{
 			Debug::Log("[SquadExt] [%s]Squad%d: both Team= and Script= given; "
@@ -656,6 +659,7 @@ bool SquadEntryData::Serialize(T& stm)
 		.Process(this->TeamID)
 		.Process(this->ScriptID)
 		.Process(this->TeamRecruits)
+		.Process(this->TeamNumbers)
 		.Process(this->OrderEcho)
 		.Process(this->OrderEchoDelay)
 		.Process(this->OrderEchoMinChange)

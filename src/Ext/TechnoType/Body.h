@@ -136,6 +136,17 @@ struct SquadEntryData
 	// Ignored for a named Team=, whose TeamType we must not mutate -- it is
 	// shared with every other user of that team in aimd.ini.
 	Valueable<bool> TeamRecruits;
+	// What the synthesised TaskForce ASKS FOR, parallel to Members=. Defaults to
+	// Numbers=, i.e. exactly what the squad brings, which is what keeps a
+	// non-recruiting team at full strength.
+	//
+	// Setting it HIGHER than Numbers= is how recruiting becomes deliberate
+	// rather than incidental: the team is short from the moment it is created,
+	// so with TeamRecruits=yes it fills the gap out of the owner's existing
+	// army straight away instead of only as members die. "Field one of mine and
+	// conscript three of yours" is expressible; without it, recruiting could
+	// only ever be observed by losing a member first.
+	ValueableVector<int> TeamNumbers;
 
 	// -- when this entry fires (bitmask of SquadSpawnEventFlags) --
 	int SpawnEvents;
@@ -192,6 +203,7 @@ struct SquadEntryData
 		, TeamID {}
 		, ScriptID {}
 		, TeamRecruits { false }
+		, TeamNumbers {}
 		, OrderEcho { SquadOrderEcho::None }
 		, OrderEchoDelay { 30 }
 		, OrderEchoMinChange { 3 }
