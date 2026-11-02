@@ -255,6 +255,10 @@ public:
 
 	static ExtContainer ExtMap;
 
+	// One-shot liveness flag for the building tick (see Hooks.SquadSpawn.cpp).
+	// Session-scoped, deliberately not serialised: it is a probe, not state.
+	static bool BuildingTickReported;
+
 	// Called from the Unlimbo hook: flag the unit so its roster is processed on
 	// the next AI tick (when it is actually on the map). Cheap and side-effect
 	// free for units with no roster.

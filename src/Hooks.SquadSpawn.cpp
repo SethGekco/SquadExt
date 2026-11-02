@@ -13,6 +13,7 @@
 #include <BuildingClass.h>
 
 #include <Utilities/Macro.h>
+#include <Utilities/Debug.h>
 
 #include <Ext/Techno/Body.h>
 #include <SquadTeams.h>
@@ -118,6 +119,28 @@ DEFINE_HOOK(0x702050, TechnoClass_ReceiveDamage_AnchorDeath_SquadExt, 0x6)
 DEFINE_HOOK(0x43FE69, BuildingClass_AI_SquadExt, 0xA)
 {
 	GET(BuildingClass*, pThis, ESI);
+
+	// Liveness probe for the BUILDING tick.
+	//
+	// Five DLLs in this install reference 0x43FE69, and Syringe only chains
+	// handlers while each returns 0. So "our handler never ran" and "it ran and
+	// found nothing to do" are indistinguishable from the log -- which is
+	// exactly the ambiguity that let me mistake a silent log for an absent
+	// squad. One line per session, raised the first time this tick sees a
+	// building that actually has a roster.
+	if (!TechnoExt::BuildingTickReported)
+	{
+		if (auto const pType = pThis->GetTechnoType())
+		{
+			auto const pTypeExt = TechnoTypeExt::ExtMap.Find(pType);
+			if (pTypeExt && pTypeExt->HasSquads())
+			{
+				TechnoExt::BuildingTickReported = true;
+				Debug::Log("[SquadExt] building tick ALIVE (first roster building: %s).\n",
+					pType->ID);
+			}
+		}
+	}
 
 	TechnoExt::ProcessPendingSpawn(pThis);
 	TechnoExt::ProcessSpawnTimer(pThis);

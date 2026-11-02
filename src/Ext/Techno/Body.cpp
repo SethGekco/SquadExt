@@ -19,6 +19,7 @@
 #include <SquadTeams.h>
 
 TechnoExt::ExtContainer TechnoExt::ExtMap;
+bool TechnoExt::BuildingTickReported = false;
 
 // Bounds for walking a nested squad tree during selection. A cyclic roster is
 // already prevented from hanging by the visited set; these just cap the work.
@@ -397,6 +398,12 @@ void TechnoExt::FlagForSquadSpawn(TechnoClass* pTechno)
 		return;
 
 	pExt->PendingSquadSpawn = true;
+
+	// The first half of the chain: unlimbo saw a roster and raised the flag.
+	// If this line appears and "pending spawn running" never does, the per-frame
+	// tick for that class of unit is not reaching us at all.
+	Debug::Log("[SquadExt] %s(%p): flagged for squad spawn on unlimbo.\n",
+		pType->ID, pTechno);
 }
 
 // Core spawn pass, shared by every trigger.
@@ -495,7 +502,17 @@ void TechnoExt::SpawnEntriesForEvent(TechnoClass* pAnchor, int eventFlag, bool l
 	}
 
 	if (eligible.empty())
+	{
+		// Was silent. A roster that parses but never fires looks identical in
+		// game to one that was never read, and the silence made the log look
+		// like proof of absence when it was only proof of nothing being said.
+		Debug::Log("[SquadExt] %s: %s fired, but no entry answered it "
+			"(%d entr%s in the roster).\n",
+			pType->ID, SpawnEventName(eventFlag),
+			static_cast<int>(pTypeExt->SquadData.size()),
+			pTypeExt->SquadData.size() == 1 ? "y" : "ies");
 		return;
+	}
 
 	std::vector<const SquadEntryData*> chosen;
 	switch (pTypeExt->EntrySelect)
@@ -1222,6 +1239,9 @@ void TechnoExt::ProcessPendingSpawn(TechnoClass* pAnchor)
 		return;
 
 	pExt->PendingSquadSpawn = false;
+
+	Debug::Log("[SquadExt] %s(%p): pending spawn running.\n",
+		pAnchor->GetTechnoType()->ID, pAnchor);
 
 	if (pExt->SquadsSpawned)
 		return;
