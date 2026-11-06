@@ -10,6 +10,8 @@
 
 #include <SquadEnums.h>
 
+#include <TargetClass.h>
+
 class TeamClass;
 
 // Per-instance squad state.
@@ -300,6 +302,11 @@ public:
 	// False when a click or band-select must skip this unit entirely
 	// (Selectable=no). Safe to call on anything.
 	static bool IsSquadSelectable(TechnoClass* pTechno);
+
+	// Refuse a player order at EventClass::Execute, before the engine applies
+	// it. Returns true when the event must be abandoned.
+	static bool RefusePlayerOrder(TechnoClass* pTechno, Mission mission,
+		TargetClass target, TargetClass dest);
 
 	// Called from the per-frame AI hook: keep a member near its anchor. No-op
 	// for anything that is not a following squad member, so units that never

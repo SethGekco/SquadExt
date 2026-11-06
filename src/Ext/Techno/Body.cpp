@@ -943,6 +943,114 @@ namespace
 // source, and a wrong slot is a crash in a live game. The cost of doing it here
 // is that a refused order shows roughly one frame of movement before the member
 // reverts, and that it cannot grey out the cursor.
+// Refuse a PLAYER order before the engine ever applies it.
+//
+// Called from EventClass::Execute, which is the only route a human order takes:
+// every click becomes a MEGAMISSION event, while the AI's own mission changes,
+// a team script's moves and the engine's retaliation never pass through here.
+// That is the distinction the per-frame tick could not make.
+//
+// Refusing the event outright means there is no movement to undo -- no frame of
+// twitch, and nothing for a faster click to accumulate, because the order never
+// reaches the unit at all.
+//
+// Determinism matters here: Execute runs on every machine against the same
+// event list, so the decision must depend only on game state (ext data and
+// positions) and never on anything local. It does.
+bool TechnoExt::RefusePlayerOrder(TechnoClass* pTechno, Mission mission,
+	TargetClass target, TargetClass dest)
+{
+	auto const pExt = TechnoExt::ExtMap.Find(pTechno);
+	if (!pExt)
+		return false;
+
+	// Fast path: two tests for every unit that opted into neither feature,
+	// which is every unit in the game by default.
+	if (pExt->SquadOrderable && pExt->SquadOrderRange <= 0)
+		return false;
+
+	if (!pExt->IsSquadMember)
+		return false;
+
+	auto const pAnchor = pExt->SquadAnchor;
+	if (!pAnchor || !pAnchor->IsAlive || pAnchor->InLimbo)
+		return false;
+
+	// A defector answers to the player who took it, not to its old anchor.
+	if (MemberHasDeparted(pAnchor, pTechno))
+		return false;
+
+	// Which clicks count as an order? Everything that moves or re-targets.
+	// Stop and Guard are deliberately NOT refused: a player must always be able
+	// to tell a member to stand still, and refusing that would leave a member
+	// with no way out of a mission it was given.
+	switch (mission)
+	{
+	case Mission::Move:
+	case Mission::QMove:
+	case Mission::AttackMove:
+	case Mission::Enter:
+	case Mission::Capture:
+	case Mission::Patrol:
+	case Mission::Attack:
+		break;
+	default:
+		return false;
+	}
+
+	if (!pExt->SquadOrderable)
+	{
+		if (!pExt->OrderCancelLogged)
+		{
+			pExt->OrderCancelLogged = true;
+			Debug::Log("[SquadExt] %s(%p): refused a player order (Orderable=no, "
+				"mission %d) at the event. Further refusals for this member are "
+				"silent.\n",
+				pTechno->GetTechnoType()->ID, pTechno, static_cast<int>(mission));
+		}
+		return true;
+	}
+
+	// OrderRange: judge the order by where it POINTS, at click time, instead of
+	// hauling the member back after it has already walked out. An attack order
+	// carries a target and no destination, which is exactly the case that used
+	// to escape the radius entirely.
+	if (pExt->SquadOrderRange > 0)
+	{
+		auto const pWhere = dest.As_Abstract()
+			? dest.As_Abstract()
+			: target.As_Abstract();
+
+		if (!pWhere)
+			return false; // nothing to measure against; let the engine have it
+
+		CoordStruct const to = pWhere->GetCoords();
+		CoordStruct const at = pAnchor->GetCoords();
+
+		// Cell space, matching OrderEcho and Follow: squared lepton deltas
+		// overflow INT_MAX past roughly 180 cells.
+		int const dx = to.X / 256 - at.X / 256;
+		int const dy = to.Y / 256 - at.Y / 256;
+		int const range = pExt->SquadOrderRange;
+
+		if (dx * dx + dy * dy > range * range)
+		{
+			if (!pExt->OrderCancelLogged)
+			{
+				pExt->OrderCancelLogged = true;
+				Debug::Log("[SquadExt] %s(%p): refused a player order (mission %d) "
+					"pointing %d,%d cells from its anchor, OrderRange is %d. "
+					"Further refusals for this member are silent.\n",
+					pTechno->GetTechnoType()->ID, pTechno, static_cast<int>(mission),
+					dx, dy, range);
+			}
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void TechnoExt::ProcessSquadOrders(TechnoClass* pMember)
 {
 	auto const pExt = TechnoExt::ExtMap.Find(pMember);
@@ -989,45 +1097,22 @@ void TechnoExt::ProcessSquadOrders(TechnoClass* pMember)
 
 	Mission const cur = pFoot->CurrentMission;
 
-	if (!pExt->SquadOrderable)
-	{
-		// Orderable=no: revert movement orders to the member's held mission.
-		//
-		// Only MOVEMENT missions are cancelled. Mission::Attack is deliberately
-		// left alone because a player-issued attack and the engine's own
-		// retaliation are the same mission -- cancelling it would leave a guard
-		// unable to shoot back, a worse bug than the one being fixed.
-		switch (cur)
-		{
-		case Mission::Move:
-		case Mission::QMove:
-		case Mission::Enter:
-		case Mission::Capture:
-		case Mission::Patrol:
-		case Mission::AttackMove:
-			// ApplyMission no-ops for "no held mission" on purpose (Stance=none
-			// means leave the engine default alone at spawn). Refusing an order
-			// still has to cancel it, so fall back to a plain stop rather than
-			// silently doing nothing.
-			if (pExt->MemberMission < 0)
-				pMember->QueueMission(Mission::Stop, false);
-			else
-				ApplyMission(pMember, pExt->MemberMission);
-
-			if (!pExt->OrderCancelLogged)
-			{
-				pExt->OrderCancelLogged = true;
-				Debug::Log("[SquadExt] %s(%p): refused an outside order "
-					"(Orderable=no), reverted to mission %d. Further refusals "
-					"for this member are silent.\n",
-					pMember->GetTechnoType()->ID, pMember, pExt->MemberMission);
-			}
-			return;
-
-		default:
-			break;
-		}
-	}
+	// Orderable=no used to be enforced here, by watching for a movement mission
+	// and reverting it. That was wrong twice over, and both faults showed up in
+	// play:
+	//
+	//  - It is one frame late, so clicking faster than the revert accumulated
+	//    real ground and walked the member off the tower anyway.
+	//  - It could not tell a player's order from the engine's, so Mission::Attack
+	//    had to be exempted wholesale to keep retaliation working -- which meant
+	//    force-firing or assigning a target moved a member that was supposed to
+	//    be immovable, until the target died.
+	//
+	// Both are provenance problems, and a mission the engine has already applied
+	// does not carry its provenance. A player order is now refused where it
+	// enters the game instead: see RefusePlayerOrder, driven from
+	// EventClass::Execute. Movement the engine or a team script issues is left
+	// alone, which is also what a Script= member needs.
 
 	// MissionHold: put the member back on its mission once it has lapsed into
 	// idling. This is what separates a squad member from a spawner minion -- a
